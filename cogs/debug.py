@@ -164,7 +164,9 @@ class Debug(commands.Cog):
                 f"Owners configured: **{len(config.OWNER_IDS)}**\n"
                 f"Global-mod roles configured: **{len(config.GLOBAL_ACTION_ROLE_IDS)}**\n"
                 f"Approved servers: **{len(config.APPROVED_GUILD_IDS) or 'all (no allowlist)'}**\n"
-                f"Auto-leave unapproved: **{config.LEAVE_UNAPPROVED_GUILDS}**"
+                f"Auto-leave unapproved: **{config.LEAVE_UNAPPROVED_GUILDS}**\n"
+                f"Protected users: **{len(config.PROTECTED_USER_IDS)}**\n"
+                f"Blocked users: **{len(config.BLOCKED_USER_IDS)}**"
             ),
             inline=False,
         )

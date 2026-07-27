@@ -5,6 +5,7 @@ import discord
 from discord.ext import commands
 
 import diagnostics
+import guards
 from config import BOT_TOKEN, COMMAND_PREFIX
 from database import close_database, connect_database
 from embeds import build_notice_embed, set_brand_icon
@@ -51,6 +52,14 @@ async def on_ready():
         logger.info("Reconnected - skipping slash command sync (already done this session)")
 
 
+@bot.check
+async def reject_blocked_users(ctx: commands.Context) -> bool:
+    """Applies to every command in every cog, so a new command can't forget the deny list."""
+    if guards.is_blocked(ctx.author.id):
+        raise guards.BlockedUser("You are not permitted to use this bot.")
+    return True
+
+
 @bot.event
 async def on_command_completion(ctx: commands.Context):
     diagnostics.record_invocation(ctx.command.qualified_name)
@@ -85,6 +94,8 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
         message = "That command only works inside a server."
     elif isinstance(error, commands.PrivateMessageOnly):
         message = "That command only works in a DM to the bot."
+    elif isinstance(error, guards.BlockedUser):
+        message = "You are not permitted to use this bot."
     elif isinstance(error, commands.CheckFailure):
         message = "That command is restricted to global moderators."
     elif isinstance(error, discord.Forbidden):

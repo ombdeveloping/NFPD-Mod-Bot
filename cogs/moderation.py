@@ -1,24 +1,38 @@
 from datetime import timedelta
+from typing import Optional
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 from database import add_temp_ban, get_guild_settings, get_warn_count, remove_temp_ban
-from embeds import build_dm_notice_embed, build_notice_embed
+from embeds import audit_reason, build_dm_notice_embed, build_notice_embed
+from guards import refusal_reason
 from modlog import announce_case, record_case, try_dm
 
 MAX_TIMEOUT_MINUTES = 40320  # Discord's own cap: 28 days
-
-
-def outranked(actor: discord.Member, target: discord.Member) -> bool:
-    if actor.id == actor.guild.owner_id:
-        return False
-    return target.top_role >= actor.top_role
+MAX_TEMPBAN_MINUTES = 525600  # 1 year - generous, but bounded so a typo can't overflow a datetime
 
 
 async def notify_member(member: discord.Member, action_type: str, guild_name: str, reason: str) -> None:
     await try_dm(member, build_dm_notice_embed(action_type, guild_name, reason))
+
+
+async def perform_or_report(ctx: commands.Context, action_label: str, coroutine) -> bool:
+    """Run a moderation action; on failure, tell the moderator plainly rather than letting a
+    generic error surface after the member may already have been DMed that it succeeded."""
+    try:
+        await coroutine
+        return True
+    except discord.HTTPException as error:
+        await ctx.send(
+            embed=build_notice_embed(
+                f"Sent the notice, but the {action_label} itself failed: `{error}`. "
+                "Check my role position and permissions - nothing was recorded.",
+                success=False,
+            )
+        )
+        return False
 
 
 class Moderation(commands.Cog):
@@ -44,7 +58,8 @@ class Moderation(commands.Cog):
             elif action_type == "kick":
                 await member.kick(reason=reason)
             else:
-                until = discord.utils.utcnow() + timedelta(minutes=settings["warn_mute_minutes"] or 60)
+                mute_minutes = max(1, settings["warn_mute_minutes"] or 60)
+                until = discord.utils.utcnow() + timedelta(minutes=mute_minutes)
                 await member.timeout(until, reason=reason)
         except discord.HTTPException:
             await ctx.send(
@@ -64,13 +79,18 @@ class Moderation(commands.Cog):
     @commands.has_permissions(kick_members=True)
     @commands.bot_has_permissions(kick_members=True)
     async def kick(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
-        if outranked(ctx.author, member):
-            await ctx.send(embed=build_notice_embed("You can't kick someone ranked equal or above you.", success=False))
+        refusal = refusal_reason(ctx.author, member, self.bot.user.id)
+        if refusal:
+            await ctx.send(embed=build_notice_embed(refusal, success=False))
             return
 
+        await ctx.defer()
         await notify_member(member, "kick", ctx.guild.name, reason)
-        await member.kick(reason=f"{ctx.author} ({ctx.author.id}): {reason}")
-        await announce_case(ctx, member, "kick", reason)
+        succeeded = await perform_or_report(
+            ctx, "kick", member.kick(reason=audit_reason(ctx.author, "Kick", reason))
+        )
+        if succeeded:
+            await announce_case(ctx, member, "kick", reason)
 
     @commands.hybrid_command(name="ban", description="Permanently ban a member from this server")
     @app_commands.describe(member="The member to ban", reason="Why they're being banned")
@@ -78,13 +98,18 @@ class Moderation(commands.Cog):
     @commands.has_permissions(ban_members=True)
     @commands.bot_has_permissions(ban_members=True)
     async def ban(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
-        if outranked(ctx.author, member):
-            await ctx.send(embed=build_notice_embed("You can't ban someone ranked equal or above you.", success=False))
+        refusal = refusal_reason(ctx.author, member, self.bot.user.id)
+        if refusal:
+            await ctx.send(embed=build_notice_embed(refusal, success=False))
             return
 
+        await ctx.defer()
         await notify_member(member, "ban", ctx.guild.name, reason)
-        await member.ban(reason=f"{ctx.author} ({ctx.author.id}): {reason}")
-        await announce_case(ctx, member, "ban", reason)
+        succeeded = await perform_or_report(
+            ctx, "ban", member.ban(reason=audit_reason(ctx.author, "Ban", reason))
+        )
+        if succeeded:
+            await announce_case(ctx, member, "ban", reason)
 
     @commands.hybrid_command(name="tempban", description="Ban a member and automatically unban them later")
     @app_commands.describe(
@@ -99,19 +124,22 @@ class Moderation(commands.Cog):
         self,
         ctx: commands.Context,
         member: discord.Member,
-        duration_minutes: int,
+        duration_minutes: app_commands.Range[int, 1, MAX_TEMPBAN_MINUTES],
         *,
         reason: str = "No reason provided",
     ):
-        if outranked(ctx.author, member):
-            await ctx.send(embed=build_notice_embed("You can't ban someone ranked equal or above you.", success=False))
-            return
-        if duration_minutes <= 0:
-            await ctx.send(embed=build_notice_embed("Duration must be a positive number of minutes.", success=False))
+        refusal = refusal_reason(ctx.author, member, self.bot.user.id)
+        if refusal:
+            await ctx.send(embed=build_notice_embed(refusal, success=False))
             return
 
+        await ctx.defer()
         await notify_member(member, "ban", ctx.guild.name, reason)
-        await member.ban(reason=f"{ctx.author} ({ctx.author.id}): {reason}")
+        succeeded = await perform_or_report(
+            ctx, "ban", member.ban(reason=audit_reason(ctx.author, "Tempban", reason))
+        )
+        if not succeeded:
+            return
 
         unban_at = discord.utils.utcnow() + timedelta(minutes=duration_minutes)
         await add_temp_ban(ctx.guild.id, member.id, unban_at)
@@ -126,10 +154,14 @@ class Moderation(commands.Cog):
     @commands.has_permissions(ban_members=True)
     @commands.bot_has_permissions(ban_members=True)
     async def unban(self, ctx: commands.Context, user: discord.User, *, reason: str = "No reason provided"):
+        await ctx.defer()
         try:
-            await ctx.guild.unban(user, reason=f"{ctx.author} ({ctx.author.id}): {reason}")
+            await ctx.guild.unban(user, reason=audit_reason(ctx.author, "Unban", reason))
         except discord.NotFound:
             await ctx.send(embed=build_notice_embed(f"**{user}** isn't banned here.", success=False))
+            return
+        except discord.HTTPException as error:
+            await ctx.send(embed=build_notice_embed(f"Couldn't unban **{user}**: `{error}`", success=False))
             return
 
         await remove_temp_ban(ctx.guild.id, user.id)
@@ -140,6 +172,12 @@ class Moderation(commands.Cog):
     @commands.guild_only()
     @commands.has_permissions(kick_members=True)
     async def warn(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
+        refusal = refusal_reason(ctx.author, member, self.bot.user.id, check_hierarchy=False)
+        if refusal:
+            await ctx.send(embed=build_notice_embed(refusal, success=False))
+            return
+
+        await ctx.defer()
         await notify_member(member, "warn", ctx.guild.name, reason)
         await announce_case(ctx, member, "warn", reason)
 
@@ -159,25 +197,24 @@ class Moderation(commands.Cog):
         self,
         ctx: commands.Context,
         member: discord.Member,
-        duration_minutes: int,
+        duration_minutes: app_commands.Range[int, 1, MAX_TIMEOUT_MINUTES],
         *,
         reason: str = "No reason provided",
     ):
-        if outranked(ctx.author, member):
-            await ctx.send(embed=build_notice_embed("You can't mute someone ranked equal or above you.", success=False))
-            return
-        if not 1 <= duration_minutes <= MAX_TIMEOUT_MINUTES:
-            await ctx.send(
-                embed=build_notice_embed(
-                    f"Duration must be between 1 and {MAX_TIMEOUT_MINUTES} minutes (28 days).", success=False
-                )
-            )
+        refusal = refusal_reason(ctx.author, member, self.bot.user.id)
+        if refusal:
+            await ctx.send(embed=build_notice_embed(refusal, success=False))
             return
 
+        await ctx.defer()
         until = discord.utils.utcnow() + timedelta(minutes=duration_minutes)
-        await member.timeout(until, reason=f"{ctx.author} ({ctx.author.id}): {reason}")
-        await notify_member(member, "mute", ctx.guild.name, reason)
+        succeeded = await perform_or_report(
+            ctx, "mute", member.timeout(until, reason=audit_reason(ctx.author, "Mute", reason))
+        )
+        if not succeeded:
+            return
 
+        await notify_member(member, "mute", ctx.guild.name, reason)
         embed = await record_case(ctx.guild, member, ctx.author, "mute", reason)
         embed.add_field(name="Expires", value=discord.utils.format_dt(until, style="R"), inline=True)
         await ctx.send(embed=embed)
@@ -192,8 +229,12 @@ class Moderation(commands.Cog):
             await ctx.send(embed=build_notice_embed(f"{member.mention} isn't currently muted.", success=False))
             return
 
-        await member.timeout(None, reason=f"{ctx.author} ({ctx.author.id}): {reason}")
-        await announce_case(ctx, member, "unmute", reason)
+        await ctx.defer()
+        succeeded = await perform_or_report(
+            ctx, "unmute", member.timeout(None, reason=audit_reason(ctx.author, "Unmute", reason))
+        )
+        if succeeded:
+            await announce_case(ctx, member, "unmute", reason)
 
 
 async def setup(bot: commands.Bot):

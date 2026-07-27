@@ -6,7 +6,8 @@ from discord import app_commands
 from discord.ext import commands
 
 from config import APPROVED_GUILD_IDS, GLOBAL_ACTION_ROLE_IDS, OWNER_IDS
-from embeds import build_dm_notice_embed, build_notice_embed, build_summary_embed
+from embeds import audit_reason, build_dm_notice_embed, build_notice_embed, build_summary_embed
+from guards import is_protected
 from modlog import record_case, try_dm
 from views import ConfirmView, build_confirm_prompt
 
@@ -17,6 +18,12 @@ GuildAction = Callable[[discord.Guild, Optional[discord.Member]], Awaitable[None
 
 def is_global_moderator():
     async def predicate(ctx: commands.Context) -> bool:
+        # guild_only() also guards this, but check ordering in discord.py runs checks in the
+        # order decorators were applied - closest to the function first - so this predicate can
+        # run before guild_only()'s. Guard explicitly rather than depend on decorator order.
+        if ctx.guild is None:
+            return False
+
         # Global commands may only be issued from a server you control. Without this, anyone who
         # adds the bot could at minimum probe these commands from a server you have no oversight of.
         if APPROVED_GUILD_IDS and ctx.guild.id not in APPROVED_GUILD_IDS:
@@ -40,6 +47,17 @@ def target_guilds(bot: commands.Bot) -> list[discord.Guild]:
 
 async def notify_user(user: discord.User, action_type: str, reason: str) -> None:
     await try_dm(user, build_dm_notice_embed(action_type, "all servers", reason))
+
+
+async def refuse_protected(ctx: commands.Context, user: discord.User) -> bool:
+    """Global actions bypass per-server role hierarchy entirely, so the protected list is the
+    only thing standing between a rogue global moderator and banning an owner everywhere."""
+    if not is_protected(user.id):
+        return False
+    await ctx.send(
+        embed=build_notice_embed(f"**{user}** is on the protected list and can't be moderated.", success=False)
+    )
+    return True
 
 
 async def request_confirmation(ctx: commands.Context, description: str) -> bool:
@@ -89,16 +107,18 @@ class GlobalModeration(commands.Cog):
     @commands.guild_only()
     @is_global_moderator()
     async def globalkick(self, ctx: commands.Context, user: discord.User, *, reason: str = "No reason provided"):
+        if await refuse_protected(ctx, user):
+            return
         if not await request_confirmation(ctx, f"Kick **{user}** from every server they share with this bot?"):
             await ctx.send(embed=build_notice_embed("Global kick cancelled.", success=False))
             return
 
         await notify_user(user, "global_kick", reason)
-        audit_reason = f"Global kick by {ctx.author} ({ctx.author.id}): {reason}"
+        reason_text = audit_reason(ctx.author, "Global kick", reason)
 
         await self.apply_everywhere(
             ctx, user, "global_kick", reason,
-            lambda guild, member: member.kick(reason=audit_reason),
+            lambda guild, member: member.kick(reason=reason_text),
             member_only=True,
         )
 
@@ -107,16 +127,18 @@ class GlobalModeration(commands.Cog):
     @commands.guild_only()
     @is_global_moderator()
     async def globalban(self, ctx: commands.Context, user: discord.User, *, reason: str = "No reason provided"):
+        if await refuse_protected(ctx, user):
+            return
         if not await request_confirmation(ctx, f"Ban **{user}** from **every server** this bot is in?"):
             await ctx.send(embed=build_notice_embed("Global ban cancelled.", success=False))
             return
 
         await notify_user(user, "global_ban", reason)
-        audit_reason = f"Global ban by {ctx.author} ({ctx.author.id}): {reason}"
+        reason_text = audit_reason(ctx.author, "Global ban", reason)
 
         await self.apply_everywhere(
             ctx, user, "global_ban", reason,
-            lambda guild, member: guild.ban(user, reason=audit_reason, delete_message_seconds=0),
+            lambda guild, member: guild.ban(user, reason=reason_text, delete_message_seconds=0),
             member_only=False,
         )
 
@@ -126,11 +148,11 @@ class GlobalModeration(commands.Cog):
     @is_global_moderator()
     async def globalunban(self, ctx: commands.Context, user: discord.User, *, reason: str = "No reason provided"):
         await ctx.defer()
-        audit_reason = f"Global unban by {ctx.author} ({ctx.author.id}): {reason}"
+        reason_text = audit_reason(ctx.author, "Global unban", reason)
 
         await self.apply_everywhere(
             ctx, user, "global_unban", reason,
-            lambda guild, member: guild.unban(user, reason=audit_reason),
+            lambda guild, member: guild.unban(user, reason=reason_text),
             member_only=False,
         )
 
@@ -146,18 +168,12 @@ class GlobalModeration(commands.Cog):
         self,
         ctx: commands.Context,
         user: discord.User,
-        duration_minutes: int,
+        duration_minutes: app_commands.Range[int, 1, MAX_TIMEOUT_MINUTES],
         *,
         reason: str = "No reason provided",
     ):
-        if duration_minutes <= 0 or duration_minutes > MAX_TIMEOUT_MINUTES:
-            await ctx.send(
-                embed=build_notice_embed(
-                    f"Duration must be between 1 and {MAX_TIMEOUT_MINUTES} minutes (28 days).", success=False
-                )
-            )
+        if await refuse_protected(ctx, user):
             return
-
         if not await request_confirmation(
             ctx, f"Mute **{user}** for {duration_minutes} minutes in every shared server?"
         ):
@@ -166,11 +182,11 @@ class GlobalModeration(commands.Cog):
 
         await notify_user(user, "global_mute", reason)
         until = discord.utils.utcnow() + timedelta(minutes=duration_minutes)
-        audit_reason = f"Global mute by {ctx.author} ({ctx.author.id}): {reason}"
+        reason_text = audit_reason(ctx.author, "Global mute", reason)
 
         await self.apply_everywhere(
             ctx, user, "global_mute", reason,
-            lambda guild, member: member.timeout(until, reason=audit_reason),
+            lambda guild, member: member.timeout(until, reason=reason_text),
             member_only=True,
         )
 
@@ -180,11 +196,11 @@ class GlobalModeration(commands.Cog):
     @is_global_moderator()
     async def globalunmute(self, ctx: commands.Context, user: discord.User, *, reason: str = "No reason provided"):
         await ctx.defer()
-        audit_reason = f"Global unmute by {ctx.author} ({ctx.author.id}): {reason}"
+        reason_text = audit_reason(ctx.author, "Global unmute", reason)
 
         await self.apply_everywhere(
             ctx, user, "global_unmute", reason,
-            lambda guild, member: member.timeout(None, reason=audit_reason),
+            lambda guild, member: member.timeout(None, reason=reason_text),
             member_only=True,
         )
 
