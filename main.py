@@ -25,6 +25,8 @@ INITIAL_COGS = (
     "cogs.channel_moderation",
     "cogs.raid_protection",
     "cogs.scheduled_tasks",
+    "cogs.owner",
+    "cogs.guild_guard",
 )
 
 

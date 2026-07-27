@@ -5,7 +5,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from config import GLOBAL_ACTION_ROLE_IDS, OWNER_IDS
+from config import APPROVED_GUILD_IDS, GLOBAL_ACTION_ROLE_IDS, OWNER_IDS
 from embeds import build_dm_notice_embed, build_notice_embed, build_summary_embed
 from modlog import record_case, try_dm
 from views import ConfirmView, build_confirm_prompt
@@ -17,12 +17,25 @@ GuildAction = Callable[[discord.Guild, Optional[discord.Member]], Awaitable[None
 
 def is_global_moderator():
     async def predicate(ctx: commands.Context) -> bool:
+        # Global commands may only be issued from a server you control. Without this, anyone who
+        # adds the bot could at minimum probe these commands from a server you have no oversight of.
+        if APPROVED_GUILD_IDS and ctx.guild.id not in APPROVED_GUILD_IDS:
+            raise commands.CheckFailure("Global commands can only be used from an approved server.")
+
         if ctx.author.id in OWNER_IDS:
             return True
+
         author_role_ids = {role.id for role in getattr(ctx.author, "roles", [])}
         return bool(author_role_ids & GLOBAL_ACTION_ROLE_IDS)
 
     return commands.check(predicate)
+
+
+def target_guilds(bot: commands.Bot) -> list[discord.Guild]:
+    """Servers a global action is allowed to touch. Falls back to every server if no allowlist is set."""
+    if not APPROVED_GUILD_IDS:
+        return list(bot.guilds)
+    return [guild for guild in bot.guilds if guild.id in APPROVED_GUILD_IDS]
 
 
 async def notify_user(user: discord.User, action_type: str, reason: str) -> None:
@@ -53,7 +66,7 @@ class GlobalModeration(commands.Cog):
         """Run one action across every guild, recording a case per guild it succeeded in."""
         affected, failed = [], []
 
-        for guild in self.bot.guilds:
+        for guild in target_guilds(self.bot):
             member = guild.get_member(user.id)
             if member_only and member is None:
                 continue
