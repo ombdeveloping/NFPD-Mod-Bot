@@ -6,6 +6,7 @@ load_dotenv()
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 COMMAND_PREFIX = os.environ.get("COMMAND_PREFIX", "!")
+BRAND_NAME = os.environ.get("BRAND_NAME", "Moderation")
 
 OWNER_IDS = {
     int(owner_id.strip())

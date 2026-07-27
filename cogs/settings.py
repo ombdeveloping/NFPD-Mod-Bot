@@ -2,45 +2,77 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from database import set_log_channel, set_raid_protection, set_warn_thresholds
+from database import get_guild_settings, set_log_channel, set_raid_protection, set_warn_thresholds
+from embeds import NEUTRAL_COLOR, base_embed, build_notice_embed
+
+
+def describe_threshold(count: int | None, suffix: str = "") -> str:
+    return f"{count} warns{suffix}" if count else "Disabled"
 
 
 class Settings(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @commands.hybrid_command(name="setlogchannel", description="Set the channel where moderation actions are logged")
+    @commands.hybrid_command(name="settings", description="Show this server's moderation configuration")
+    @commands.has_permissions(manage_guild=True)
+    async def settings(self, ctx: commands.Context):
+        config = await get_guild_settings(ctx.guild.id)
+
+        log_channel = ctx.guild.get_channel(config["log_channel_id"]) if config["log_channel_id"] else None
+        raid_hours = config["raid_min_account_age_hours"]
+        mute_minutes = config["warn_mute_minutes"]
+
+        embed = base_embed(f"Settings  \u2022  {ctx.guild.name}", NEUTRAL_COLOR)
+        embed.add_field(name="Mod-log channel", value=log_channel.mention if log_channel else "Not set", inline=False)
+        embed.add_field(
+            name="Raid protection",
+            value=f"Flag accounts under {raid_hours}h old" if raid_hours else "Disabled",
+            inline=False,
+        )
+        embed.add_field(
+            name="Warn escalation",
+            value=(
+                f"Mute at {describe_threshold(config['warn_mute_threshold'], f' for {mute_minutes}m' if mute_minutes else '')}\n"
+                f"Kick at {describe_threshold(config['warn_kick_threshold'])}\n"
+                f"Ban at {describe_threshold(config['warn_ban_threshold'])}"
+            ),
+            inline=False,
+        )
+        await ctx.send(embed=embed)
+
+    @commands.hybrid_command(name="setlogchannel", description="Set where moderation actions are logged")
     @app_commands.describe(channel="The channel to post mod-log entries to")
     @commands.has_permissions(manage_guild=True)
     async def setlogchannel(self, ctx: commands.Context, channel: discord.TextChannel):
         await set_log_channel(ctx.guild.id, channel.id)
-        await ctx.send(f"Mod-log channel set to {channel.mention}.")
+        await ctx.send(embed=build_notice_embed(f"Mod-log channel set to {channel.mention}."))
 
     @commands.hybrid_command(
         name="setraidprotection",
-        description="Flag new members whose account is younger than this many hours (0 to disable)",
+        description="Flag joins from accounts younger than this many hours (0 disables)",
     )
-    @app_commands.describe(
-        minimum_account_age_hours="Minimum account age in hours; younger accounts get flagged in the log channel"
-    )
+    @app_commands.describe(minimum_account_age_hours="Minimum account age in hours, or 0 to disable")
     @commands.has_permissions(manage_guild=True)
     async def setraidprotection(self, ctx: commands.Context, minimum_account_age_hours: int):
         if minimum_account_age_hours < 0:
-            await ctx.send("Minimum account age can't be negative.")
+            await ctx.send(embed=build_notice_embed("Minimum account age can't be negative.", success=False))
             return
 
         await set_raid_protection(ctx.guild.id, minimum_account_age_hours or None)
         if minimum_account_age_hours == 0:
-            await ctx.send("Raid protection disabled.")
-        else:
-            await ctx.send(
-                f"Raid protection enabled: accounts younger than {minimum_account_age_hours}h will be flagged "
-                "in the mod-log channel when they join. Set one with /setlogchannel if you haven't."
+            await ctx.send(embed=build_notice_embed("Raid protection disabled."))
+            return
+
+        await ctx.send(
+            embed=build_notice_embed(
+                f"Accounts younger than **{minimum_account_age_hours}h** will be flagged in the mod-log channel."
             )
+        )
 
     @commands.hybrid_command(
         name="setwarnthresholds",
-        description="Configure automatic escalation based on warn count (0 disables a threshold)",
+        description="Auto-escalate at set warn counts (0 disables that step)",
     )
     @app_commands.describe(
         mute_at="Warn count that triggers an automatic mute (0 to disable)",
@@ -57,24 +89,24 @@ class Settings(commands.Cog):
         kick_at: int = 0,
         ban_at: int = 0,
     ):
-        active_thresholds = [value for value in (mute_at, kick_at, ban_at) if value > 0]
-        if active_thresholds != sorted(active_thresholds):
-            await ctx.send("Thresholds must increase in severity: mute_at < kick_at < ban_at.")
+        active = [value for value in (mute_at, kick_at, ban_at) if value > 0]
+        if active != sorted(active) or len(active) != len(set(active)):
+            await ctx.send(
+                embed=build_notice_embed(
+                    "Thresholds must increase in severity, with no ties: mute < kick < ban.", success=False
+                )
+            )
             return
 
         await set_warn_thresholds(
-            ctx.guild.id,
-            mute_at or None,
-            mute_minutes if mute_at else None,
-            kick_at or None,
-            ban_at or None,
+            ctx.guild.id, mute_at or None, mute_minutes if mute_at else None, kick_at or None, ban_at or None
         )
-        await ctx.send(
-            "Warn escalation updated:\n"
-            f"- Mute at {mute_at or 'disabled'} warns" + (f" for {mute_minutes}m" if mute_at else "") + "\n"
-            f"- Kick at {kick_at or 'disabled'} warns\n"
-            f"- Ban at {ban_at or 'disabled'} warns"
-        )
+
+        embed = base_embed("Warn Escalation Updated", NEUTRAL_COLOR)
+        embed.add_field(name="Mute", value=describe_threshold(mute_at, f" for {mute_minutes}m"), inline=True)
+        embed.add_field(name="Kick", value=describe_threshold(kick_at), inline=True)
+        embed.add_field(name="Ban", value=describe_threshold(ban_at), inline=True)
+        await ctx.send(embed=embed)
 
 
 async def setup(bot: commands.Bot):

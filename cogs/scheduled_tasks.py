@@ -3,9 +3,8 @@ from datetime import datetime, timezone
 import discord
 from discord.ext import commands, tasks
 
-from database import add_case, get_expired_temp_bans, remove_temp_ban
-from embeds import build_case_embed
-from modlog import post_to_log_channel
+from database import get_expired_temp_bans, remove_temp_ban
+from modlog import record_case
 
 
 class ScheduledTasks(commands.Cog):
@@ -18,9 +17,7 @@ class ScheduledTasks(commands.Cog):
 
     @tasks.loop(minutes=1)
     async def expire_temp_bans(self) -> None:
-        expired_rows = await get_expired_temp_bans(datetime.now(timezone.utc))
-
-        for row in expired_rows:
+        for row in await get_expired_temp_bans(datetime.now(timezone.utc)):
             guild_id, user_id = row["guild_id"], row["user_id"]
             await remove_temp_ban(guild_id, user_id)
 
@@ -34,10 +31,7 @@ class ScheduledTasks(commands.Cog):
             except (discord.NotFound, discord.Forbidden):
                 continue
 
-            reason = "Temporary ban expired"
-            case_id = await add_case(guild_id, user_id, self.bot.user.id, "unban", reason)
-            embed = build_case_embed("unban", user, self.bot.user, reason, case_id)
-            await post_to_log_channel(guild, embed)
+            await record_case(guild, user, self.bot.user, "unban", "Temporary ban expired")
 
     @expire_temp_bans.before_loop
     async def before_expire_temp_bans(self) -> None:

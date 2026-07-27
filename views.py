@@ -1,5 +1,8 @@
 import discord
 
+from config import BRAND_NAME
+from embeds import DANGER_COLOR, NEUTRAL_COLOR, build_case_line
+
 
 class ConfirmView(discord.ui.View):
     def __init__(self, author_id: int, *, timeout: float = 30.0):
@@ -16,9 +19,12 @@ class ConfirmView(discord.ui.View):
             return False
         return True
 
-    async def on_timeout(self) -> None:
+    def _disable_all(self) -> None:
         for child in self.children:
             child.disabled = True
+
+    async def on_timeout(self) -> None:
+        self._disable_all()
         if self.message is not None:
             try:
                 await self.message.edit(view=self)
@@ -28,16 +34,14 @@ class ConfirmView(discord.ui.View):
     @discord.ui.button(label="Confirm", style=discord.ButtonStyle.danger)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.confirmed = True
-        for child in self.children:
-            child.disabled = True
+        self._disable_all()
         self.stop()
         await interaction.response.edit_message(view=self)
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.confirmed = False
-        for child in self.children:
-            child.disabled = True
+        self._disable_all()
         self.stop()
         await interaction.response.edit_message(view=self)
 
@@ -51,42 +55,36 @@ class CasesPaginatorView(discord.ui.View):
         guild: discord.Guild,
         per_page: int = 5,
     ):
-        super().__init__(timeout=60.0)
+        super().__init__(timeout=120.0)
         self.author_id = author_id
         self.member = member
         self.case_rows = case_rows
         self.guild = guild
         self.per_page = per_page
         self.page = 0
-        self.max_page = max(0, (len(case_rows) - 1) // per_page)
+        self.last_page = max(0, (len(case_rows) - 1) // per_page)
         self.message: discord.Message | None = None
-        self._update_button_states()
+        self._sync_buttons()
 
-    def _update_button_states(self) -> None:
+    def _sync_buttons(self) -> None:
         self.previous_button.disabled = self.page == 0
-        self.next_button.disabled = self.page >= self.max_page
+        self.next_button.disabled = self.page >= self.last_page
 
     def build_embed(self) -> discord.Embed:
         start = self.page * self.per_page
         page_rows = self.case_rows[start : start + self.per_page]
 
-        embed = discord.Embed(
-            title=f"Case History \u2014 {self.member}",
-            color=discord.Color.blurple(),
-            timestamp=discord.utils.utcnow(),
-        )
-        embed.set_thumbnail(url=self.member.display_avatar.url)
+        embed = discord.Embed(color=NEUTRAL_COLOR, timestamp=discord.utils.utcnow())
+        embed.set_author(name=f"Case History  \u2022  {self.member}", icon_url=self.member.display_avatar.url)
 
         for row in page_rows:
-            moderator = self.guild.get_member(row["moderator_id"])
-            moderator_name = moderator.mention if moderator else f"ID {row['moderator_id']}"
-            embed.add_field(
-                name=f"Case #{row['id']} \u2014 {row['action_type'].upper()}",
-                value=f"By {moderator_name}\nReason: {row['reason']}\n{row['created_at']}",
-                inline=False,
-            )
+            field_name, field_value = build_case_line(row, self.guild)
+            embed.add_field(name=field_name, value=field_value, inline=False)
 
-        embed.set_footer(text=f"Page {self.page + 1} of {self.max_page + 1} \u2014 {len(self.case_rows)} total cases")
+        embed.set_footer(
+            text=f"Page {self.page + 1} of {self.last_page + 1}  \u2022  "
+            f"{len(self.case_rows)} total  \u2022  {BRAND_NAME}"
+        )
         return embed
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -109,11 +107,21 @@ class CasesPaginatorView(discord.ui.View):
     @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary)
     async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.page -= 1
-        self._update_button_states()
+        self._sync_buttons()
         await interaction.response.edit_message(embed=self.build_embed(), view=self)
 
     @discord.ui.button(label="Next", style=discord.ButtonStyle.secondary)
     async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.page += 1
-        self._update_button_states()
+        self._sync_buttons()
         await interaction.response.edit_message(embed=self.build_embed(), view=self)
+
+
+def build_confirm_prompt(description: str) -> discord.Embed:
+    embed = discord.Embed(
+        title="Confirm Global Action",
+        description=description,
+        color=DANGER_COLOR,
+    )
+    embed.set_footer(text="This affects every server the bot is in.")
+    return embed

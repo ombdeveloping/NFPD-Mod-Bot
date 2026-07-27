@@ -4,7 +4,10 @@ import discord
 from discord.ext import commands
 
 from database import get_guild_settings
+from embeds import base_embed
 from modlog import post_to_log_channel
+
+ALERT_COLOR = 0xF5A524
 
 
 class RaidProtection(commands.Cog):
@@ -14,26 +17,22 @@ class RaidProtection(commands.Cog):
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
         settings = await get_guild_settings(member.guild.id)
-        min_age_hours = settings["raid_min_account_age_hours"]
-        if not min_age_hours:
+        minimum_age_hours = settings["raid_min_account_age_hours"]
+        if not minimum_age_hours:
             return
 
         account_age = datetime.now(timezone.utc) - member.created_at
-        if account_age.total_seconds() >= min_age_hours * 3600:
+        if account_age.total_seconds() >= minimum_age_hours * 3600:
             return
 
-        embed = discord.Embed(
-            title="New Account Alert",
-            description=f"{member.mention} joined with an account under {min_age_hours}h old.",
-            color=discord.Color.gold(),
-            timestamp=discord.utils.utcnow(),
+        embed = base_embed(
+            "New Account Alert",
+            ALERT_COLOR,
+            f"{member.mention} joined with an account under **{minimum_age_hours}h** old.",
         )
         embed.set_thumbnail(url=member.display_avatar.url)
-        embed.add_field(
-            name="Account Created", value=discord.utils.format_dt(member.created_at, style="R"), inline=True
-        )
+        embed.add_field(name="Account created", value=discord.utils.format_dt(member.created_at, "R"), inline=True)
         embed.add_field(name="User ID", value=f"`{member.id}`", inline=True)
-
         await post_to_log_channel(member.guild, embed)
 
 
