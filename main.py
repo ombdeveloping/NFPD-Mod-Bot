@@ -17,7 +17,12 @@ bot = commands.Bot(command_prefix=COMMAND_PREFIX, intents=intents)
 
 INITIAL_COGS = (
     "cogs.moderation",
+    "cogs.case_management",
     "cogs.global_moderation",
+    "cogs.settings",
+    "cogs.channel_moderation",
+    "cogs.raid_protection",
+    "cogs.scheduled_tasks",
 )
 
 

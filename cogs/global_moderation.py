@@ -6,7 +6,9 @@ from discord.ext import commands
 
 from config import GLOBAL_ACTION_ROLE_ID, OWNER_IDS
 from database import add_case
-from embeds import build_dm_notice_embed, build_summary_embed
+from embeds import build_case_embed, build_dm_notice_embed, build_summary_embed
+from modlog import post_to_log_channel
+from views import ConfirmView
 
 MAX_TIMEOUT_MINUTES = 40320  # Discord's own cap: 28 days
 
@@ -31,6 +33,14 @@ async def notify_user(user: discord.User, action_type: str, reason: str) -> None
         pass
 
 
+async def confirm_global_action(ctx: commands.Context, description: str) -> bool:
+    view = ConfirmView(author_id=ctx.author.id)
+    prompt = discord.Embed(title="Confirm Global Action", description=description, color=discord.Color.dark_red())
+    view.message = await ctx.send(embed=prompt, view=view)
+    await view.wait()
+    return bool(view.confirmed)
+
+
 class GlobalModeration(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -42,7 +52,13 @@ class GlobalModeration(commands.Cog):
     @app_commands.describe(user="The user to kick everywhere", reason="Why they're being kicked")
     @is_global_moderator()
     async def globalkick(self, ctx: commands.Context, user: discord.User, *, reason: str = "No reason provided"):
-        await ctx.defer()
+        confirmed = await confirm_global_action(
+            ctx, f"Kick {user.mention} from every server this bot shares with them?"
+        )
+        if not confirmed:
+            await ctx.send("Global kick cancelled.")
+            return
+
         await notify_user(user, "global_kick", reason)
 
         kicked_from, failed_in = [], []
@@ -52,8 +68,9 @@ class GlobalModeration(commands.Cog):
                 continue
             try:
                 await member.kick(reason=f"Global kick by {ctx.author} ({ctx.author.id}): {reason}")
-                await add_case(guild.id, user.id, ctx.author.id, "global_kick", reason)
+                case_id = await add_case(guild.id, user.id, ctx.author.id, "global_kick", reason)
                 kicked_from.append(guild.name)
+                await post_to_log_channel(guild, build_case_embed("global_kick", user, ctx.author, reason, case_id))
             except discord.Forbidden:
                 failed_in.append(guild.name)
 
@@ -66,7 +83,11 @@ class GlobalModeration(commands.Cog):
     @app_commands.describe(user="The user to ban everywhere", reason="Why they're being banned")
     @is_global_moderator()
     async def globalban(self, ctx: commands.Context, user: discord.User, *, reason: str = "No reason provided"):
-        await ctx.defer()
+        confirmed = await confirm_global_action(ctx, f"Ban {user.mention} from **every server** this bot is in?")
+        if not confirmed:
+            await ctx.send("Global ban cancelled.")
+            return
+
         await notify_user(user, "global_ban", reason)
 
         banned_from, failed_in = [], []
@@ -77,8 +98,9 @@ class GlobalModeration(commands.Cog):
                     reason=f"Global ban by {ctx.author} ({ctx.author.id}): {reason}",
                     delete_message_seconds=0,
                 )
-                await add_case(guild.id, user.id, ctx.author.id, "global_ban", reason)
+                case_id = await add_case(guild.id, user.id, ctx.author.id, "global_ban", reason)
                 banned_from.append(guild.name)
+                await post_to_log_channel(guild, build_case_embed("global_ban", user, ctx.author, reason, case_id))
             except (discord.Forbidden, discord.HTTPException):
                 failed_in.append(guild.name)
 
@@ -97,10 +119,11 @@ class GlobalModeration(commands.Cog):
         for guild in self.bot.guilds:
             try:
                 await guild.unban(user, reason=f"Global unban by {ctx.author} ({ctx.author.id}): {reason}")
-                await add_case(guild.id, user.id, ctx.author.id, "global_unban", reason)
+                case_id = await add_case(guild.id, user.id, ctx.author.id, "global_unban", reason)
                 unbanned_from.append(guild.name)
+                await post_to_log_channel(guild, build_case_embed("global_unban", user, ctx.author, reason, case_id))
             except discord.NotFound:
-                continue  # user wasn't banned there, nothing to do
+                continue
             except discord.Forbidden:
                 failed_in.append(guild.name)
 
@@ -128,7 +151,13 @@ class GlobalModeration(commands.Cog):
             await ctx.send(f"Duration must be between 1 and {MAX_TIMEOUT_MINUTES} minutes (28 days).")
             return
 
-        await ctx.defer()
+        confirmed = await confirm_global_action(
+            ctx, f"Mute {user.mention} for {duration_minutes} minutes in every server this bot shares with them?"
+        )
+        if not confirmed:
+            await ctx.send("Global mute cancelled.")
+            return
+
         await notify_user(user, "global_mute", reason)
         until = discord.utils.utcnow() + timedelta(minutes=duration_minutes)
 
@@ -139,8 +168,9 @@ class GlobalModeration(commands.Cog):
                 continue
             try:
                 await member.timeout(until, reason=f"Global mute by {ctx.author} ({ctx.author.id}): {reason}")
-                await add_case(guild.id, user.id, ctx.author.id, "global_mute", reason)
+                case_id = await add_case(guild.id, user.id, ctx.author.id, "global_mute", reason)
                 muted_in.append(guild.name)
+                await post_to_log_channel(guild, build_case_embed("global_mute", user, ctx.author, reason, case_id))
             except discord.Forbidden:
                 failed_in.append(guild.name)
 
@@ -162,8 +192,9 @@ class GlobalModeration(commands.Cog):
                 continue
             try:
                 await member.timeout(None, reason=f"Global unmute by {ctx.author} ({ctx.author.id}): {reason}")
-                await add_case(guild.id, user.id, ctx.author.id, "global_unmute", reason)
+                case_id = await add_case(guild.id, user.id, ctx.author.id, "global_unmute", reason)
                 unmuted_in.append(guild.name)
+                await post_to_log_channel(guild, build_case_embed("global_unmute", user, ctx.author, reason, case_id))
             except discord.Forbidden:
                 failed_in.append(guild.name)
 

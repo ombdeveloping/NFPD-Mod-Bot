@@ -3,6 +3,7 @@ import discord
 ACTION_COLORS = {
     "kick": discord.Color.orange(),
     "ban": discord.Color.red(),
+    "unban": discord.Color.green(),
     "warn": discord.Color.yellow(),
     "mute": discord.Color.dark_gold(),
     "unmute": discord.Color.green(),
