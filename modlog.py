@@ -12,12 +12,13 @@ async def post_to_log_channel(guild: discord.Guild, embed: discord.Embed) -> Non
         return
 
     channel = guild.get_channel(channel_id)
-    if channel is None:
+    # The channel may have been deleted, or converted to a type that can't receive messages.
+    if not isinstance(channel, discord.abc.Messageable):
         return
 
     try:
         await channel.send(embed=embed)
-    except discord.Forbidden:
+    except discord.HTTPException:
         pass
 
 
@@ -46,3 +47,12 @@ async def announce_case(
     embed = await record_case(ctx.guild, target, moderator or ctx.author, action_type, reason)
     await ctx.send(embed=embed)
     return embed
+
+
+async def try_dm(user: discord.abc.User, embed: discord.Embed) -> bool:
+    """DMs fail for closed DMs (403), bots and blocked senders (400), and deleted accounts (404)."""
+    try:
+        await user.send(embed=embed)
+        return True
+    except discord.HTTPException:
+        return False

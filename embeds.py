@@ -34,6 +34,18 @@ ACTION_STYLES = {
 
 FALLBACK_STYLE = ActionStyle(NEUTRAL_COLOR, "\U0001F4CB", "Action", "")
 
+EMBED_FIELD_LIMIT = 1024
+EMBED_DESCRIPTION_LIMIT = 4096
+
+
+def clamp(text: str | None, limit: int = EMBED_FIELD_LIMIT, *, empty: str = "*Not specified*") -> str:
+    """Discord rejects embed fields that are empty or over the character limit."""
+    if not text or not text.strip():
+        return empty
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rstrip() + "..."
+
 
 def style_for(action_type: str) -> ActionStyle:
     return ACTION_STYLES.get(action_type, FALLBACK_STYLE)
@@ -66,7 +78,7 @@ def build_case_embed(
     embed.set_author(name=f"{style.icon}  {style.title}", icon_url=target.display_avatar.url)
     embed.description = f"**{target}**\n`{target.id}`"
     embed.add_field(name="Moderator", value=moderator.mention, inline=True)
-    embed.add_field(name="Reason", value=reason, inline=False)
+    embed.add_field(name="Reason", value=clamp(reason), inline=False)
     embed.set_footer(text=f"Case #{case_id}  \u2022  {BRAND_NAME}")
     return embed
 
@@ -75,11 +87,11 @@ def build_dm_notice_embed(action_type: str, location_name: str, reason: str) -> 
     style = style_for(action_type)
     embed = discord.Embed(
         title=f"{style.icon}  {style.title}",
-        description=style.dm_line.format(location=f"**{location_name}**"),
+        description=style.dm_line.format(location=f"**{location_name}**") or None,
         color=style.color,
         timestamp=discord.utils.utcnow(),
     )
-    embed.add_field(name="Reason", value=reason, inline=False)
+    embed.add_field(name="Reason", value=clamp(reason), inline=False)
     embed.set_footer(text=BRAND_NAME)
     return embed
 
@@ -97,13 +109,13 @@ def build_summary_embed(
 
     embed.add_field(
         name=f"Applied in {len(affected)} server(s)",
-        value="\n".join(f"- {name}" for name in affected) or "*None*",
+        value=clamp("\n".join(f"- {name}" for name in affected), empty="*None*"),
         inline=False,
     )
     if failed:
         embed.add_field(
             name=f"Skipped, missing permissions ({len(failed)})",
-            value="\n".join(f"- {name}" for name in failed),
+            value=clamp("\n".join(f"- {name}" for name in failed)),
             inline=False,
         )
 
@@ -118,7 +130,8 @@ def build_case_line(row, guild: discord.Guild) -> tuple[str, str]:
     moderator_name = moderator.mention if moderator else f"`{row['moderator_id']}`"
 
     name = f"{style.icon}  Case #{row['id']}  \u2022  {style.title}"
-    value = f"{row['reason']}\n{moderator_name}  \u2022  {format_timestamp(row['created_at'], 'R')}"
+    reason = clamp(row["reason"], limit=800)
+    value = f"{reason}\n{moderator_name}  \u2022  {format_timestamp(row['created_at'], 'R')}"
     return name, value
 
 

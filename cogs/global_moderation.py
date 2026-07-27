@@ -7,7 +7,7 @@ from discord.ext import commands
 
 from config import GLOBAL_ACTION_ROLE_IDS, OWNER_IDS
 from embeds import build_dm_notice_embed, build_notice_embed, build_summary_embed
-from modlog import record_case
+from modlog import record_case, try_dm
 from views import ConfirmView, build_confirm_prompt
 
 MAX_TIMEOUT_MINUTES = 40320  # Discord's own cap: 28 days
@@ -26,10 +26,7 @@ def is_global_moderator():
 
 
 async def notify_user(user: discord.User, action_type: str, reason: str) -> None:
-    try:
-        await user.send(embed=build_dm_notice_embed(action_type, "all servers", reason))
-    except discord.Forbidden:
-        pass
+    await try_dm(user, build_dm_notice_embed(action_type, "all servers", reason))
 
 
 async def request_confirmation(ctx: commands.Context, description: str) -> bool:
@@ -76,6 +73,7 @@ class GlobalModeration(commands.Cog):
 
     @commands.hybrid_command(name="globalkick", description="Kick a user from every server the bot shares with them")
     @app_commands.describe(user="The user to kick everywhere", reason="Why they're being kicked")
+    @commands.guild_only()
     @is_global_moderator()
     async def globalkick(self, ctx: commands.Context, user: discord.User, *, reason: str = "No reason provided"):
         if not await request_confirmation(ctx, f"Kick **{user}** from every server they share with this bot?"):
@@ -93,6 +91,7 @@ class GlobalModeration(commands.Cog):
 
     @commands.hybrid_command(name="globalban", description="Ban a user from every server the bot is in")
     @app_commands.describe(user="The user to ban everywhere", reason="Why they're being banned")
+    @commands.guild_only()
     @is_global_moderator()
     async def globalban(self, ctx: commands.Context, user: discord.User, *, reason: str = "No reason provided"):
         if not await request_confirmation(ctx, f"Ban **{user}** from **every server** this bot is in?"):
@@ -110,6 +109,7 @@ class GlobalModeration(commands.Cog):
 
     @commands.hybrid_command(name="globalunban", description="Unban a user from every server the bot is in")
     @app_commands.describe(user="The user to unban everywhere", reason="Why they're being unbanned")
+    @commands.guild_only()
     @is_global_moderator()
     async def globalunban(self, ctx: commands.Context, user: discord.User, *, reason: str = "No reason provided"):
         await ctx.defer()
@@ -127,6 +127,7 @@ class GlobalModeration(commands.Cog):
         duration_minutes="How long to mute for, in minutes (max 40320 = 28 days)",
         reason="Why they're being muted",
     )
+    @commands.guild_only()
     @is_global_moderator()
     async def globalmute(
         self,
@@ -162,6 +163,7 @@ class GlobalModeration(commands.Cog):
 
     @commands.hybrid_command(name="globalunmute", description="Clear a user's timeout in every shared server")
     @app_commands.describe(user="The user to unmute everywhere", reason="Why they're being unmuted")
+    @commands.guild_only()
     @is_global_moderator()
     async def globalunmute(self, ctx: commands.Context, user: discord.User, *, reason: str = "No reason provided"):
         await ctx.defer()

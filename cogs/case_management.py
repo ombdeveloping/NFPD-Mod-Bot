@@ -44,6 +44,7 @@ class CaseManagement(commands.Cog):
 
     @commands.hybrid_command(name="cases", description="View a member's moderation history")
     @app_commands.describe(member="The member to look up")
+    @commands.guild_only()
     @commands.has_permissions(kick_members=True)
     async def cases(self, ctx: commands.Context, member: discord.Member):
         case_rows = await get_cases_for_user(ctx.guild.id, member.id)
@@ -56,6 +57,7 @@ class CaseManagement(commands.Cog):
 
     @commands.hybrid_command(name="casesearch", description="Look up a single case by its ID")
     @app_commands.describe(case_id="The case number to look up")
+    @commands.guild_only()
     @commands.has_permissions(kick_members=True)
     async def casesearch(self, ctx: commands.Context, case_id: int):
         case_row = await get_case_by_id(ctx.guild.id, case_id)
@@ -63,7 +65,17 @@ class CaseManagement(commands.Cog):
             await ctx.send(embed=build_notice_embed(f"No case #{case_id} in this server.", success=False))
             return
 
-        target = self.bot.get_user(case_row["user_id"]) or await self.bot.fetch_user(case_row["user_id"])
+        target = self.bot.get_user(case_row["user_id"])
+        if target is None:
+            try:
+                target = await self.bot.fetch_user(case_row["user_id"])
+            except discord.NotFound:
+                await ctx.send(
+                    embed=build_notice_embed(
+                        f"Case #{case_id} refers to a deleted account (`{case_row['user_id']}`).", success=False
+                    )
+                )
+                return
         moderator = ctx.guild.get_member(case_row["moderator_id"])
         style = style_for(case_row["action_type"])
 
@@ -82,6 +94,7 @@ class CaseManagement(commands.Cog):
 
     @commands.hybrid_command(name="caseedit", description="Correct the reason on an existing case")
     @app_commands.describe(case_id="The case number to edit", new_reason="The corrected reason")
+    @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
     async def caseedit(self, ctx: commands.Context, case_id: int, *, new_reason: str):
         if not await update_case_reason(ctx.guild.id, case_id, new_reason):
@@ -96,6 +109,7 @@ class CaseManagement(commands.Cog):
 
     @commands.hybrid_command(name="casedelete", description="Permanently delete a case record")
     @app_commands.describe(case_id="The case number to delete")
+    @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
     async def casedelete(self, ctx: commands.Context, case_id: int):
         if not await delete_case(ctx.guild.id, case_id):
@@ -108,6 +122,7 @@ class CaseManagement(commands.Cog):
         await post_to_log_channel(ctx.guild, embed)
 
     @commands.hybrid_command(name="caseexport", description="Export this server's full case history as a CSV file")
+    @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
     async def caseexport(self, ctx: commands.Context):
         case_rows = await get_all_cases(ctx.guild.id)
@@ -129,6 +144,7 @@ class CaseManagement(commands.Cog):
         await ctx.send(embed=embed, file=export_file)
 
     @commands.hybrid_command(name="modstats", description="Moderation activity overview for this server")
+    @commands.guild_only()
     @commands.has_permissions(kick_members=True)
     async def modstats(self, ctx: commands.Context):
         action_counts = await get_action_counts(ctx.guild.id)

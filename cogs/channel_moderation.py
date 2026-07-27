@@ -32,6 +32,7 @@ class ChannelModeration(commands.Cog):
         seconds="Delay between messages in seconds (0 disables, max 21600)",
         channel="Channel to apply to, defaults to the current one",
     )
+    @commands.guild_only()
     @commands.has_permissions(manage_channels=True)
     @commands.bot_has_permissions(manage_channels=True)
     async def slowmode(self, ctx: commands.Context, seconds: int, channel: Optional[discord.TextChannel] = None):
@@ -57,6 +58,7 @@ class ChannelModeration(commands.Cog):
         amount="How many messages to scan and delete (1 to 100)",
         member="Only delete messages from this member",
     )
+    @commands.guild_only()
     @commands.has_permissions(manage_messages=True)
     @commands.bot_has_permissions(manage_messages=True, read_message_history=True)
     async def purge(self, ctx: commands.Context, amount: int, member: Optional[discord.Member] = None):
@@ -75,7 +77,12 @@ class ChannelModeration(commands.Cog):
         else:
             await ctx.defer(ephemeral=True)
 
-        message_filter = (lambda message: message.author.id == member.id) if member else None
+        # purge() calls check() on every message, so this must be callable even with no member filter.
+        if member is None:
+            message_filter = lambda message: True
+        else:
+            message_filter = lambda message: message.author.id == member.id
+
         deleted = await ctx.channel.purge(limit=amount, check=message_filter)
 
         scope = f" from {member.mention}" if member else ""
@@ -96,6 +103,7 @@ class ChannelModeration(commands.Cog):
         channel="Channel to lock, defaults to the current one",
         reason="Why the channel is being locked",
     )
+    @commands.guild_only()
     @commands.has_permissions(manage_channels=True)
     @commands.bot_has_permissions(manage_channels=True)
     async def lockdown(
@@ -122,6 +130,7 @@ class ChannelModeration(commands.Cog):
 
     @commands.hybrid_command(name="unlock", description="Restore the lockdown role's ability to send messages")
     @app_commands.describe(channel="Channel to unlock, defaults to the current one")
+    @commands.guild_only()
     @commands.has_permissions(manage_channels=True)
     @commands.bot_has_permissions(manage_channels=True)
     async def unlock(self, ctx: commands.Context, channel: Optional[discord.TextChannel] = None):

@@ -1,5 +1,4 @@
 from datetime import timedelta
-from typing import Optional
 
 import discord
 from discord import app_commands
@@ -7,7 +6,7 @@ from discord.ext import commands
 
 from database import add_temp_ban, get_guild_settings, get_warn_count, remove_temp_ban
 from embeds import build_dm_notice_embed, build_notice_embed
-from modlog import announce_case, record_case
+from modlog import announce_case, record_case, try_dm
 
 MAX_TIMEOUT_MINUTES = 40320  # Discord's own cap: 28 days
 
@@ -19,10 +18,7 @@ def outranked(actor: discord.Member, target: discord.Member) -> bool:
 
 
 async def notify_member(member: discord.Member, action_type: str, guild_name: str, reason: str) -> None:
-    try:
-        await member.send(embed=build_dm_notice_embed(action_type, guild_name, reason))
-    except discord.Forbidden:
-        pass
+    await try_dm(member, build_dm_notice_embed(action_type, guild_name, reason))
 
 
 class Moderation(commands.Cog):
@@ -34,22 +30,27 @@ class Moderation(commands.Cog):
         reason = f"Automatic action after reaching {warn_count} warns"
 
         if settings["warn_ban_threshold"] == warn_count:
-            action_type, perform = "ban", member.ban(reason=reason)
+            action_type = "ban"
         elif settings["warn_kick_threshold"] == warn_count:
-            action_type, perform = "kick", member.kick(reason=reason)
+            action_type = "kick"
         elif settings["warn_mute_threshold"] == warn_count:
-            until = discord.utils.utcnow() + timedelta(minutes=settings["warn_mute_minutes"] or 60)
-            action_type, perform = "mute", member.timeout(until, reason=reason)
+            action_type = "mute"
         else:
             return
 
         try:
-            await perform
-        except discord.Forbidden:
+            if action_type == "ban":
+                await member.ban(reason=reason)
+            elif action_type == "kick":
+                await member.kick(reason=reason)
+            else:
+                until = discord.utils.utcnow() + timedelta(minutes=settings["warn_mute_minutes"] or 60)
+                await member.timeout(until, reason=reason)
+        except discord.HTTPException:
             await ctx.send(
                 embed=build_notice_embed(
                     f"{member.mention} hit the warn threshold for an automatic {action_type}, "
-                    "but I lack permission to do it.",
+                    "but I couldn't carry it out. Check my permissions and role position.",
                     success=False,
                 )
             )
@@ -59,6 +60,7 @@ class Moderation(commands.Cog):
 
     @commands.hybrid_command(name="kick", description="Kick a member from this server")
     @app_commands.describe(member="The member to kick", reason="Why they're being kicked")
+    @commands.guild_only()
     @commands.has_permissions(kick_members=True)
     @commands.bot_has_permissions(kick_members=True)
     async def kick(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
@@ -70,42 +72,57 @@ class Moderation(commands.Cog):
         await member.kick(reason=f"{ctx.author} ({ctx.author.id}): {reason}")
         await announce_case(ctx, member, "kick", reason)
 
-    @commands.hybrid_command(name="ban", description="Ban a member, optionally for a limited time")
-    @app_commands.describe(
-        member="The member to ban",
-        duration_minutes="Auto-unban after this many minutes (omit for permanent)",
-        reason="Why they're being banned",
-    )
+    @commands.hybrid_command(name="ban", description="Permanently ban a member from this server")
+    @app_commands.describe(member="The member to ban", reason="Why they're being banned")
+    @commands.guild_only()
     @commands.has_permissions(ban_members=True)
     @commands.bot_has_permissions(ban_members=True)
-    async def ban(
+    async def ban(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
+        if outranked(ctx.author, member):
+            await ctx.send(embed=build_notice_embed("You can't ban someone ranked equal or above you.", success=False))
+            return
+
+        await notify_member(member, "ban", ctx.guild.name, reason)
+        await member.ban(reason=f"{ctx.author} ({ctx.author.id}): {reason}")
+        await announce_case(ctx, member, "ban", reason)
+
+    @commands.hybrid_command(name="tempban", description="Ban a member and automatically unban them later")
+    @app_commands.describe(
+        member="The member to ban",
+        duration_minutes="How long the ban lasts, in minutes",
+        reason="Why they're being banned",
+    )
+    @commands.guild_only()
+    @commands.has_permissions(ban_members=True)
+    @commands.bot_has_permissions(ban_members=True)
+    async def tempban(
         self,
         ctx: commands.Context,
         member: discord.Member,
-        duration_minutes: Optional[int] = None,
+        duration_minutes: int,
         *,
         reason: str = "No reason provided",
     ):
         if outranked(ctx.author, member):
             await ctx.send(embed=build_notice_embed("You can't ban someone ranked equal or above you.", success=False))
             return
-        if duration_minutes is not None and duration_minutes <= 0:
+        if duration_minutes <= 0:
             await ctx.send(embed=build_notice_embed("Duration must be a positive number of minutes.", success=False))
             return
 
         await notify_member(member, "ban", ctx.guild.name, reason)
         await member.ban(reason=f"{ctx.author} ({ctx.author.id}): {reason}")
 
-        embed = await record_case(ctx.guild, member, ctx.author, "ban", reason)
-        if duration_minutes:
-            unban_at = discord.utils.utcnow() + timedelta(minutes=duration_minutes)
-            await add_temp_ban(ctx.guild.id, member.id, unban_at)
-            embed.add_field(name="Expires", value=discord.utils.format_dt(unban_at, style="R"), inline=True)
+        unban_at = discord.utils.utcnow() + timedelta(minutes=duration_minutes)
+        await add_temp_ban(ctx.guild.id, member.id, unban_at)
 
+        embed = await record_case(ctx.guild, member, ctx.author, "ban", reason)
+        embed.add_field(name="Expires", value=discord.utils.format_dt(unban_at, style="R"), inline=True)
         await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="unban", description="Unban a user from this server")
     @app_commands.describe(user="The user to unban", reason="Why they're being unbanned")
+    @commands.guild_only()
     @commands.has_permissions(ban_members=True)
     @commands.bot_has_permissions(ban_members=True)
     async def unban(self, ctx: commands.Context, user: discord.User, *, reason: str = "No reason provided"):
@@ -120,6 +137,7 @@ class Moderation(commands.Cog):
 
     @commands.hybrid_command(name="warn", description="Warn a member")
     @app_commands.describe(member="The member to warn", reason="Why they're being warned")
+    @commands.guild_only()
     @commands.has_permissions(kick_members=True)
     async def warn(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
         await notify_member(member, "warn", ctx.guild.name, reason)
@@ -134,6 +152,7 @@ class Moderation(commands.Cog):
         duration_minutes="How long to mute for, in minutes (max 40320 = 28 days)",
         reason="Why they're being muted",
     )
+    @commands.guild_only()
     @commands.has_permissions(moderate_members=True)
     @commands.bot_has_permissions(moderate_members=True)
     async def mute(
@@ -147,7 +166,7 @@ class Moderation(commands.Cog):
         if outranked(ctx.author, member):
             await ctx.send(embed=build_notice_embed("You can't mute someone ranked equal or above you.", success=False))
             return
-        if duration_minutes <= 0 or duration_minutes > MAX_TIMEOUT_MINUTES:
+        if not 1 <= duration_minutes <= MAX_TIMEOUT_MINUTES:
             await ctx.send(
                 embed=build_notice_embed(
                     f"Duration must be between 1 and {MAX_TIMEOUT_MINUTES} minutes (28 days).", success=False
@@ -165,6 +184,7 @@ class Moderation(commands.Cog):
 
     @commands.hybrid_command(name="unmute", description="Remove an active timeout from a member")
     @app_commands.describe(member="The member to unmute", reason="Why they're being unmuted")
+    @commands.guild_only()
     @commands.has_permissions(moderate_members=True)
     @commands.bot_has_permissions(moderate_members=True)
     async def unmute(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):

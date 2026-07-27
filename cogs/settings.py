@@ -21,6 +21,7 @@ class Settings(commands.Cog):
         self.bot = bot
 
     @commands.hybrid_command(name="settings", description="Show this server's moderation configuration")
+    @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
     async def settings(self, ctx: commands.Context):
         config = await get_guild_settings(ctx.guild.id)
@@ -55,6 +56,7 @@ class Settings(commands.Cog):
 
     @commands.hybrid_command(name="setlogchannel", description="Set where moderation actions are logged")
     @app_commands.describe(channel="The channel to post mod-log entries to")
+    @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
     async def setlogchannel(self, ctx: commands.Context, channel: discord.TextChannel):
         await set_log_channel(ctx.guild.id, channel.id)
@@ -62,6 +64,7 @@ class Settings(commands.Cog):
 
     @commands.hybrid_command(name="setlockdownrole", description="Set which role /lockdown silences")
     @app_commands.describe(role="The role that loses send-message access during a lockdown")
+    @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
     async def setlockdownrole(self, ctx: commands.Context, role: discord.Role):
         await set_lockdown_role(ctx.guild.id, role.id)
@@ -72,6 +75,7 @@ class Settings(commands.Cog):
         description="Flag joins from accounts younger than this many hours (0 disables)",
     )
     @app_commands.describe(minimum_account_age_hours="Minimum account age in hours, or 0 to disable")
+    @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
     async def setraidprotection(self, ctx: commands.Context, minimum_account_age_hours: int):
         if minimum_account_age_hours < 0:
@@ -99,6 +103,7 @@ class Settings(commands.Cog):
         kick_at="Warn count that triggers an automatic kick (0 to disable)",
         ban_at="Warn count that triggers an automatic ban (0 to disable)",
     )
+    @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
     async def setwarnthresholds(
         self,
