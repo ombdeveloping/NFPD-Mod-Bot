@@ -16,10 +16,13 @@ from database import (
     update_case_reason,
 )
 from embeds import (
+    AUDIT_REASON_LIMIT,
+    BRAND_ICON_URL,
     MUTED_COLOR,
     NEUTRAL_COLOR,
     base_embed,
     build_notice_embed,
+    clamp,
     format_timestamp,
     style_for,
 )
@@ -34,7 +37,7 @@ def format_leaderboard(rows: list, guild: discord.Guild, id_column: str) -> str:
     for position, row in enumerate(rows, start=1):
         member = guild.get_member(row[id_column])
         name = member.mention if member else f"`{row[id_column]}`"
-        lines.append(f"`{position}.` {name} \u2013 **{row['total']}**")
+        lines.append(f"`{position}.` {name} - **{row['total']}**")
     return "\n".join(lines)
 
 
@@ -80,7 +83,8 @@ class CaseManagement(commands.Cog):
         style = style_for(case_row["action_type"])
 
         embed = discord.Embed(color=style.color, timestamp=discord.utils.utcnow())
-        embed.set_author(name=f"{style.icon}  Case #{case_row['id']}", icon_url=target.display_avatar.url)
+        embed.set_author(name=f"{style.icon}  Case #{case_row['id']}", icon_url=BRAND_ICON_URL)
+        embed.set_thumbnail(url=target.display_avatar.url)
         embed.description = f"**{target}**\n`{target.id}`"
         embed.add_field(name="Action", value=style.title, inline=True)
         embed.add_field(
@@ -88,7 +92,7 @@ class CaseManagement(commands.Cog):
             value=moderator.mention if moderator else f"`{case_row['moderator_id']}`",
             inline=True,
         )
-        embed.add_field(name="Reason", value=case_row["reason"], inline=False)
+        embed.add_field(name="Reason", value=clamp(case_row["reason"]), inline=False)
         embed.add_field(name="When", value=format_timestamp(case_row["created_at"]), inline=False)
         await ctx.send(embed=embed)
 
@@ -97,12 +101,20 @@ class CaseManagement(commands.Cog):
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
     async def caseedit(self, ctx: commands.Context, case_id: int, *, new_reason: str):
+        if len(new_reason) > AUDIT_REASON_LIMIT:
+            await ctx.send(
+                embed=build_notice_embed(
+                    f"Reason is too long ({len(new_reason)} chars, max {AUDIT_REASON_LIMIT}).", success=False
+                )
+            )
+            return
+
         if not await update_case_reason(ctx.guild.id, case_id, new_reason):
             await ctx.send(embed=build_notice_embed(f"No case #{case_id} in this server.", success=False))
             return
 
         embed = base_embed(f"Case #{case_id} Edited", NEUTRAL_COLOR)
-        embed.add_field(name="New reason", value=new_reason, inline=False)
+        embed.add_field(name="New reason", value=clamp(new_reason), inline=False)
         embed.add_field(name="Edited by", value=ctx.author.mention, inline=True)
         await ctx.send(embed=embed)
         await post_to_log_channel(ctx.guild, embed)
@@ -156,10 +168,11 @@ class CaseManagement(commands.Cog):
 
         if action_counts:
             total_cases = sum(row["total"] for row in action_counts)
-            breakdown = "\n".join(
-                f"{style_for(row['action_type']).icon}  {style_for(row['action_type']).title} \u2013 **{row['total']}**"
-                for row in action_counts
-            )
+            breakdown_lines = []
+            for row in action_counts:
+                style = style_for(row["action_type"])
+                breakdown_lines.append(f"{style.icon}  {style.title} - **{row['total']}**")
+            breakdown = "\n".join(breakdown_lines)
             embed.description = f"**{total_cases}** cases on record."
             embed.add_field(name="Breakdown", value=breakdown, inline=False)
         else:

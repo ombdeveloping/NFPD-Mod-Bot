@@ -1,7 +1,7 @@
 import discord
 
 from config import BRAND_NAME
-from embeds import DANGER_COLOR, NEUTRAL_COLOR, build_case_line
+from embeds import BRAND_ICON_URL, DANGER_COLOR, NEUTRAL_COLOR, build_case_line
 
 
 class ConfirmView(discord.ui.View):
@@ -75,7 +75,7 @@ class CasesPaginatorView(discord.ui.View):
         page_rows = self.case_rows[start : start + self.per_page]
 
         embed = discord.Embed(color=NEUTRAL_COLOR, timestamp=discord.utils.utcnow())
-        embed.set_author(name=f"Case History  \u2022  {self.member}", icon_url=self.member.display_avatar.url)
+        embed.set_author(name=f"Case History  \u2022  {self.member}", icon_url=BRAND_ICON_URL)
 
         for row in page_rows:
             field_name, field_value = build_case_line(row, self.guild)
@@ -123,5 +123,5 @@ def build_confirm_prompt(description: str) -> discord.Embed:
         description=description,
         color=DANGER_COLOR,
     )
-    embed.set_footer(text="This affects every server the bot is in.")
+    embed.set_footer(text="This affects every server the bot is in.", icon_url=BRAND_ICON_URL)
     return embed

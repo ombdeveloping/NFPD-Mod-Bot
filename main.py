@@ -4,18 +4,21 @@ import logging
 import discord
 from discord.ext import commands
 
+import diagnostics
 from config import BOT_TOKEN, COMMAND_PREFIX
 from database import close_database, connect_database
-from embeds import build_notice_embed
+from embeds import build_notice_embed, set_brand_icon
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s %(name)s: %(message)s")
 logger = logging.getLogger("modbot")
+diagnostics.attach_recent_log_handler()
 
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
 
 bot = commands.Bot(command_prefix=COMMAND_PREFIX, intents=intents, help_command=None)
+_slash_commands_synced = False
 
 INITIAL_COGS = (
     "cogs.moderation",
@@ -27,14 +30,30 @@ INITIAL_COGS = (
     "cogs.scheduled_tasks",
     "cogs.owner",
     "cogs.guild_guard",
+    "cogs.debug",
 )
 
 
 @bot.event
 async def on_ready():
+    global _slash_commands_synced
     logger.info("Logged in as %s (%s) across %d guild(s)", bot.user, bot.user.id, len(bot.guilds))
-    synced = await bot.tree.sync()
-    logger.info("Synced %d slash command(s)", len(synced))
+    set_brand_icon(bot.user.display_avatar.url)
+
+    for warning in diagnostics.validate_config():
+        logger.warning("Config check: %s", warning)
+
+    if not _slash_commands_synced:
+        synced = await bot.tree.sync()
+        logger.info("Synced %d slash command(s)", len(synced))
+        _slash_commands_synced = True
+    else:
+        logger.info("Reconnected - skipping slash command sync (already done this session)")
+
+
+@bot.event
+async def on_command_completion(ctx: commands.Context):
+    diagnostics.record_invocation(ctx.command.qualified_name)
 
 
 def unwrap_error(error: BaseException) -> BaseException:
@@ -52,6 +71,9 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
     if isinstance(error, commands.CommandNotFound):
         return
 
+    if ctx.command is not None:
+        diagnostics.record_error(ctx.command.qualified_name)
+
     error = unwrap_error(error)
 
     if isinstance(error, commands.MissingPermissions):
@@ -61,6 +83,8 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
         message = f"I'm missing the required permission(s): {missing}."
     elif isinstance(error, commands.NoPrivateMessage):
         message = "That command only works inside a server."
+    elif isinstance(error, commands.PrivateMessageOnly):
+        message = "That command only works in a DM to the bot."
     elif isinstance(error, commands.CheckFailure):
         message = "That command is restricted to global moderators."
     elif isinstance(error, discord.Forbidden):
