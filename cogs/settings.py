@@ -2,7 +2,13 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from database import get_guild_settings, set_log_channel, set_raid_protection, set_warn_thresholds
+from database import (
+    get_guild_settings,
+    set_lockdown_role,
+    set_log_channel,
+    set_raid_protection,
+    set_warn_thresholds,
+)
 from embeds import NEUTRAL_COLOR, base_embed, build_notice_embed
 
 
@@ -20,11 +26,17 @@ class Settings(commands.Cog):
         config = await get_guild_settings(ctx.guild.id)
 
         log_channel = ctx.guild.get_channel(config["log_channel_id"]) if config["log_channel_id"] else None
+        lockdown_role = ctx.guild.get_role(config["lockdown_role_id"]) if config["lockdown_role_id"] else None
         raid_hours = config["raid_min_account_age_hours"]
         mute_minutes = config["warn_mute_minutes"]
 
         embed = base_embed(f"Settings  \u2022  {ctx.guild.name}", NEUTRAL_COLOR)
         embed.add_field(name="Mod-log channel", value=log_channel.mention if log_channel else "Not set", inline=False)
+        embed.add_field(
+            name="Lockdown role",
+            value=lockdown_role.mention if lockdown_role else "Not set, falls back to @everyone",
+            inline=False,
+        )
         embed.add_field(
             name="Raid protection",
             value=f"Flag accounts under {raid_hours}h old" if raid_hours else "Disabled",
@@ -47,6 +59,13 @@ class Settings(commands.Cog):
     async def setlogchannel(self, ctx: commands.Context, channel: discord.TextChannel):
         await set_log_channel(ctx.guild.id, channel.id)
         await ctx.send(embed=build_notice_embed(f"Mod-log channel set to {channel.mention}."))
+
+    @commands.hybrid_command(name="setlockdownrole", description="Set which role /lockdown silences")
+    @app_commands.describe(role="The role that loses send-message access during a lockdown")
+    @commands.has_permissions(manage_guild=True)
+    async def setlockdownrole(self, ctx: commands.Context, role: discord.Role):
+        await set_lockdown_role(ctx.guild.id, role.id)
+        await ctx.send(embed=build_notice_embed(f"/lockdown will now silence {role.mention}."))
 
     @commands.hybrid_command(
         name="setraidprotection",

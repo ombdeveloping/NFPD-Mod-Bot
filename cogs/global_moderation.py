@@ -5,7 +5,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from config import GLOBAL_ACTION_ROLE_ID, OWNER_IDS
+from config import GLOBAL_ACTION_ROLE_IDS, OWNER_IDS
 from embeds import build_dm_notice_embed, build_notice_embed, build_summary_embed
 from modlog import record_case
 from views import ConfirmView, build_confirm_prompt
@@ -19,9 +19,8 @@ def is_global_moderator():
     async def predicate(ctx: commands.Context) -> bool:
         if ctx.author.id in OWNER_IDS:
             return True
-        if GLOBAL_ACTION_ROLE_ID is None:
-            return False
-        return discord.utils.get(getattr(ctx.author, "roles", []), id=GLOBAL_ACTION_ROLE_ID) is not None
+        author_role_ids = {role.id for role in getattr(ctx.author, "roles", [])}
+        return bool(author_role_ids & GLOBAL_ACTION_ROLE_IDS)
 
     return commands.check(predicate)
 

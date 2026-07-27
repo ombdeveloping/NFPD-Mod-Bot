@@ -24,6 +24,7 @@ SCHEMA_STATEMENTS = (
     CREATE TABLE IF NOT EXISTS guild_settings (
         guild_id INTEGER PRIMARY KEY,
         log_channel_id INTEGER,
+        lockdown_role_id INTEGER,
         raid_min_account_age_hours INTEGER,
         warn_mute_threshold INTEGER,
         warn_mute_minutes INTEGER,
@@ -51,6 +52,21 @@ SCHEMA_STATEMENTS = (
 )
 
 
+# Columns added after the first release. CREATE TABLE IF NOT EXISTS won't add these to an
+# existing database, so they're applied separately on every startup.
+ADDED_COLUMNS = (
+    ("guild_settings", "lockdown_role_id", "INTEGER"),
+)
+
+
+async def _apply_column_migrations(connection: aiosqlite.Connection) -> None:
+    for table_name, column_name, column_type in ADDED_COLUMNS:
+        cursor = await connection.execute(f"PRAGMA table_info({table_name})")
+        existing_columns = {row["name"] for row in await cursor.fetchall()}
+        if column_name not in existing_columns:
+            await connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+
+
 async def connect_database() -> None:
     """Open the shared connection and apply the schema. Call once at startup."""
     global _connection
@@ -63,6 +79,7 @@ async def connect_database() -> None:
 
     for statement in SCHEMA_STATEMENTS:
         await _connection.execute(statement)
+    await _apply_column_migrations(_connection)
     await _connection.commit()
 
 
@@ -203,6 +220,7 @@ async def get_most_warned_users(guild_id: int, limit: int = 5) -> list[aiosqlite
 
 DEFAULT_SETTINGS = {
     "log_channel_id": None,
+    "lockdown_role_id": None,
     "raid_min_account_age_hours": None,
     "warn_mute_threshold": None,
     "warn_mute_minutes": None,
@@ -226,6 +244,10 @@ async def _upsert_settings(guild_id: int, assignments: str, values: tuple) -> No
 
 async def set_log_channel(guild_id: int, channel_id: int) -> None:
     await _upsert_settings(guild_id, "log_channel_id = ?", (channel_id,))
+
+
+async def set_lockdown_role(guild_id: int, role_id: int | None) -> None:
+    await _upsert_settings(guild_id, "lockdown_role_id = ?", (role_id,))
 
 
 async def set_raid_protection(guild_id: int, min_account_age_hours: int | None) -> None:
