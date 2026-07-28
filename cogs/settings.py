@@ -7,14 +7,22 @@ from database import (
     get_lockdown_role_ids,
     set_log_channel,
     set_raid_protection,
+    set_server_log_channel,
     set_warn_thresholds,
 )
 from embeds import NEUTRAL_COLOR, base_embed, build_notice_embed
-from modlog import check_log_channel
+from modlog import _resolve_channel, check_log_channel, check_server_log_channel
 
 
 def describe_threshold(count: int | None, suffix: str = "") -> str:
     return f"{count} warns{suffix}" if count else "Disabled"
+
+
+async def _channel_display(guild: discord.Guild, channel_id: int | None) -> str:
+    if channel_id is None:
+        return "Not set"
+    channel = await _resolve_channel(guild, channel_id)
+    return channel.mention if channel else f"`{channel_id}` *(not found)*"
 
 
 class Settings(commands.Cog):
@@ -27,23 +35,32 @@ class Settings(commands.Cog):
     async def settings(self, ctx: commands.Context):
         config = await get_guild_settings(ctx.guild.id)
         lockdown_role_ids = await get_lockdown_role_ids(ctx.guild.id)
-        log_channel = ctx.guild.get_channel(config["log_channel_id"]) if config["log_channel_id"] else None
         raid_hours = config["raid_min_account_age_hours"]
         mute_minutes = config["warn_mute_minutes"]
 
-        lockdown_roles = [ctx.guild.get_role(r) for r in lockdown_role_ids if ctx.guild.get_role(r)]
-        if lockdown_roles:
-            lockdown_value = ", ".join(r.mention for r in lockdown_roles)
+        mod_log_display = await _channel_display(ctx.guild, config["log_channel_id"])
+        server_log_id = config.get("server_log_channel_id")
+        if server_log_id:
+            server_log_display = await _channel_display(ctx.guild, server_log_id)
         else:
-            lockdown_value = "Not set, falls back to @everyone"
+            server_log_display = f"{mod_log_display} *(same as mod-log)*"
+
+        lockdown_roles = [ctx.guild.get_role(r) for r in lockdown_role_ids if ctx.guild.get_role(r)]
+        lockdown_value = (
+            ", ".join(r.mention for r in lockdown_roles)
+            if lockdown_roles
+            else "Not set, falls back to @everyone"
+        )
 
         embed = base_embed(f"Settings  \u2022  {ctx.guild.name}", NEUTRAL_COLOR)
-        embed.add_field(name="Mod-log channel", value=log_channel.mention if log_channel else "Not set", inline=False)
+        embed.add_field(name="Mod-log channel", value=mod_log_display, inline=True)
+        embed.add_field(name="Server-log channel", value=server_log_display, inline=True)
+        embed.add_field(name="\u200b", value="\u200b", inline=True)  # spacer to keep grid tidy
         embed.add_field(name="Lockdown roles", value=lockdown_value, inline=False)
         embed.add_field(
             name="Raid protection",
             value=f"Flag accounts under {raid_hours}h old" if raid_hours else "Disabled",
-            inline=False,
+            inline=True,
         )
         embed.add_field(
             name="Warn escalation",
@@ -52,18 +69,41 @@ class Settings(commands.Cog):
                 f"Kick at {describe_threshold(config['warn_kick_threshold'])}\n"
                 f"Ban at {describe_threshold(config['warn_ban_threshold'])}"
             ),
-            inline=False,
+            inline=True,
         )
         await ctx.send(embed=embed)
 
-    @commands.hybrid_command(name="setlogchannel", description="Set where moderation actions are logged")
-    @app_commands.describe(channel="The channel to post mod-log entries to")
+    @commands.hybrid_command(name="setlogchannel", description="Set where moderation cases are logged")
+    @app_commands.describe(channel="Channel for ban/kick/warn/mute case logs")
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
     async def setlogchannel(self, ctx: commands.Context, channel: discord.TextChannel):
         await set_log_channel(ctx.guild.id, channel.id)
         ok, detail = await check_log_channel(ctx.guild)
         message = f"Mod-log channel set to {channel.mention}."
+        if not ok:
+            message += f"\n\u26A0 {detail}"
+        await ctx.send(embed=build_notice_embed(message, success=ok))
+
+    @commands.hybrid_command(
+        name="setserverlogchannel",
+        description="Set where server events are logged (message edits/deletes, joins, voice, etc.)",
+    )
+    @app_commands.describe(channel="Channel for server event logs, or leave blank to use the mod-log channel")
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
+    async def setserverlogchannel(
+        self,
+        ctx: commands.Context,
+        channel: discord.TextChannel | None = None,
+    ):
+        await set_server_log_channel(ctx.guild.id, channel.id if channel else None)
+        if channel is None:
+            await ctx.send(embed=build_notice_embed("Server-log channel cleared. Server events will post to the mod-log channel."))
+            return
+
+        ok, detail = await check_server_log_channel(ctx.guild)
+        message = f"Server-log channel set to {channel.mention}."
         if not ok:
             message += f"\n\u26A0 {detail}"
         await ctx.send(embed=build_notice_embed(message, success=ok))
@@ -78,11 +118,39 @@ class Settings(commands.Cog):
             return
 
         config = await get_guild_settings(ctx.guild.id)
-        channel = ctx.guild.get_channel(config["log_channel_id"])
+        channel = await _resolve_channel(ctx.guild, config["log_channel_id"])
+        if channel is None:
+            await ctx.send(embed=build_notice_embed("Could not resolve the log channel. Try /setlogchannel again.", success=False))
+            return
+
         try:
-            await channel.send(embed=base_embed("Test Message", NEUTRAL_COLOR, "If you can see this, logging works."))
+            await channel.send(embed=base_embed("Test Message", NEUTRAL_COLOR, "If you can see this, mod-log is working."))
         except discord.HTTPException as error:
             await ctx.send(embed=build_notice_embed(f"Channel looked reachable, but sending failed: `{error}`", success=False))
+            return
+
+        await ctx.send(embed=build_notice_embed(f"Test message sent to {channel.mention}."))
+
+    @commands.hybrid_command(name="testserverlog", description="Send a test message to the server-log channel")
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
+    async def testserverlog(self, ctx: commands.Context):
+        ok, detail = await check_server_log_channel(ctx.guild)
+        if not ok:
+            await ctx.send(embed=build_notice_embed(detail, success=False))
+            return
+
+        config = await get_guild_settings(ctx.guild.id)
+        channel_id = config.get("server_log_channel_id") or config.get("log_channel_id")
+        channel = await _resolve_channel(ctx.guild, channel_id)
+        if channel is None:
+            await ctx.send(embed=build_notice_embed("Could not resolve the server-log channel.", success=False))
+            return
+
+        try:
+            await channel.send(embed=base_embed("Test Message", NEUTRAL_COLOR, "If you can see this, server-log is working."))
+        except discord.HTTPException as error:
+            await ctx.send(embed=build_notice_embed(f"Sending failed: `{error}`", success=False))
             return
 
         await ctx.send(embed=build_notice_embed(f"Test message sent to {channel.mention}."))
@@ -106,7 +174,7 @@ class Settings(commands.Cog):
 
         await ctx.send(
             embed=build_notice_embed(
-                f"Accounts younger than **{minimum_account_age_hours}h** will be flagged in the mod-log channel."
+                f"Accounts younger than **{minimum_account_age_hours}h** will be flagged in the server-log channel."
             )
         )
 

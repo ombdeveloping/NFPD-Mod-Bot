@@ -27,6 +27,7 @@ SCHEMA_STATEMENTS = (
     CREATE TABLE IF NOT EXISTS guild_settings (
         guild_id INTEGER PRIMARY KEY,
         log_channel_id INTEGER,
+        server_log_channel_id INTEGER,
         lockdown_role_id INTEGER,
         raid_min_account_age_hours INTEGER,
         warn_mute_threshold INTEGER,
@@ -68,6 +69,7 @@ SCHEMA_STATEMENTS = (
 # Columns added after the first release. CREATE TABLE IF NOT EXISTS won't add these to an
 # existing database, so they're applied separately on every startup.
 ADDED_COLUMNS = (
+    ("guild_settings", "server_log_channel_id", "INTEGER"),
     ("guild_settings", "lockdown_role_id", "INTEGER"),
 )
 
@@ -259,6 +261,7 @@ async def get_most_warned_users(guild_id: int, limit: int = 5) -> list[aiosqlite
 
 DEFAULT_SETTINGS = {
     "log_channel_id": None,
+    "server_log_channel_id": None,
     "lockdown_role_id": None,
     "raid_min_account_age_hours": None,
     "warn_mute_threshold": None,
@@ -283,6 +286,10 @@ async def _upsert_settings(guild_id: int, assignments: str, values: tuple) -> No
 
 async def set_log_channel(guild_id: int, channel_id: int) -> None:
     await _upsert_settings(guild_id, "log_channel_id = ?", (channel_id,))
+
+
+async def set_server_log_channel(guild_id: int, channel_id: int | None) -> None:
+    await _upsert_settings(guild_id, "server_log_channel_id = ?", (channel_id,))
 
 
 async def set_lockdown_role(guild_id: int, role_id: int | None) -> None:
