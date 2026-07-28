@@ -56,3 +56,29 @@ async def try_dm(user: discord.abc.User, embed: discord.Embed) -> bool:
         return True
     except discord.HTTPException:
         return False
+
+
+async def check_log_channel(guild: discord.Guild) -> tuple[bool, str]:
+    settings = await get_guild_settings(guild.id)
+    channel_id = settings["log_channel_id"]
+    if channel_id is None:
+        return False, "No log channel configured."
+
+    channel = guild.get_channel(channel_id)
+    if channel is None:
+        return False, "Configured log channel does not exist."
+
+    if not isinstance(channel, discord.abc.Messageable):
+        return False, "Configured log channel is not messageable."
+
+    me = guild.me
+    if me is None:
+        return False, "Bot member unavailable."
+
+    perms = channel.permissions_for(me)
+    if not perms.send_messages:
+        return False, "Missing Send Messages permission."
+    if not perms.embed_links:
+        return False, "Missing Embed Links permission."
+
+    return True, f"Logging to #{getattr(channel, 'name', channel_id)}"
