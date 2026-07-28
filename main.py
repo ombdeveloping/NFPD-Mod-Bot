@@ -8,7 +8,7 @@ import diagnostics
 import guards
 from config import BOT_TOKEN, COMMAND_PREFIX
 from database import close_database, connect_database
-from embeds import build_notice_embed
+from embeds import build_notice_embed, set_brand_icon
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s %(name)s: %(message)s")
 logger = logging.getLogger("modbot")
@@ -39,6 +39,7 @@ INITIAL_COGS = (
 async def on_ready():
     global _slash_commands_synced
     logger.info("Logged in as %s (%s) across %d guild(s)", bot.user, bot.user.id, len(bot.guilds))
+    set_brand_icon(bot.user.display_avatar.url)
 
     for warning in diagnostics.validate_config():
         logger.warning("Config check: %s", warning)

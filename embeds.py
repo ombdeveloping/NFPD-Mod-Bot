@@ -140,3 +140,12 @@ def build_notice_embed(message: str, *, success: bool = True) -> discord.Embed:
         description=message,
         color=SUCCESS_COLOR if success else DANGER_COLOR,
     )
+
+BRAND_ICON_URL=None
+def set_brand_icon(url:str):
+    global BRAND_ICON_URL
+    BRAND_ICON_URL=url
+
+def audit_reason(moderator, action:str, reason:str)->str:
+    who=getattr(moderator,"name",str(moderator))
+    return f"{action} by {who}: {reason or 'No reason provided.'}"
