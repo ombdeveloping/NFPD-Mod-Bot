@@ -7,9 +7,17 @@ from config import APPROVED_GUILD_IDS, LEAVE_UNAPPROVED_GUILDS, OWNER_IDS
 
 logger = logging.getLogger("modbot.guild_guard")
 
+UNAPPROVED_SERVER_MESSAGE = (
+    "This server is not an approved NFPD server.\n"
+    "If you believe this is a mistake, please DM the developer.\n\n"
+    "**Developer:** omb\n"
+    "**Username:** ombdeveloping\n"
+    "**Discord ID:** `1285998518213017663`"
+)
+
 
 async def resolve_invite(guild: discord.Guild) -> str | None:
-    """Try to generate a 24-hour invite from the first channel we have permission to use."""
+    """Try to generate a 24-hour invite from the first channel the bot can use."""
     if guild.me is None:
         return None
     for channel in guild.text_channels:
@@ -26,6 +34,27 @@ async def resolve_invite(guild: discord.Guild) -> str | None:
         except discord.HTTPException:
             continue
     return None
+
+
+async def post_in_server(guild: discord.Guild, message: str) -> bool:
+    """Post a message in the server's system channel, or the first writable text channel."""
+    candidates = []
+    if guild.system_channel is not None:
+        candidates.append(guild.system_channel)
+    candidates.extend(ch for ch in guild.text_channels if ch != guild.system_channel)
+
+    if guild.me is None:
+        return False
+
+    for channel in candidates:
+        if not channel.permissions_for(guild.me).send_messages:
+            continue
+        try:
+            await channel.send(message)
+            return True
+        except discord.HTTPException:
+            continue
+    return False
 
 
 class GuildGuard(commands.Cog):
@@ -69,25 +98,24 @@ class GuildGuard(commands.Cog):
             await self.alert_owners(f"Added to approved server **{guild.name}** (`{guild.id}`).")
             return
 
-        # Unapproved server - try to get an invite before potentially leaving,
-        # since we can't generate one after the bot has left.
+        # Try to get an invite before potentially leaving - can't generate one after the bot has left.
         invite_url = await resolve_invite(guild)
 
-        lines = [
+        # Post the unapproved notice in the server itself so the server owner sees it.
+        await post_in_server(guild, UNAPPROVED_SERVER_MESSAGE)
+
+        # Alert owners via DM with full details.
+        owner_lines = [
             f"Added to **unapproved** server **{guild.name}** (`{guild.id}`),",
             f"owner ID `{guild.owner_id}`, {guild.member_count} members.",
         ]
         if invite_url:
-            lines.append(f"Invite (24h): {invite_url}")
+            owner_lines.append(f"Invite (24h): {invite_url}")
         else:
-            lines.append("Could not generate an invite - no channel with Create Invite permission.")
+            owner_lines.append("Could not generate an invite - no channel with Create Invite permission.")
 
-        if LEAVE_UNAPPROVED_GUILDS:
-            lines.append("Leaving automatically.")
-        else:
-            lines.append("Global actions will not apply there.")
-
-        await self.alert_owners("\n".join(lines))
+        owner_lines.append("Leaving automatically." if LEAVE_UNAPPROVED_GUILDS else "Global actions will not apply there.")
+        await self.alert_owners("\n".join(owner_lines))
 
         if LEAVE_UNAPPROVED_GUILDS:
             await self._leave(guild)

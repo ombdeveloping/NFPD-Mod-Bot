@@ -1,3 +1,6 @@
+import json
+import os
+import time as _time
 from datetime import datetime, timezone
 
 import aiosqlite
@@ -32,6 +35,15 @@ SCHEMA_STATEMENTS = (
         warn_ban_threshold INTEGER
     )
     """,
+    # Multiple lockdown roles per guild. The old single lockdown_role_id in guild_settings
+    # is kept for backward compatibility but no longer used by channel_moderation.
+    """
+    CREATE TABLE IF NOT EXISTS lockdown_roles (
+        guild_id INTEGER NOT NULL,
+        role_id INTEGER NOT NULL,
+        PRIMARY KEY (guild_id, role_id)
+    )
+    """,
     """
     CREATE TABLE IF NOT EXISTS temp_bans (
         guild_id INTEGER NOT NULL,
@@ -41,6 +53,8 @@ SCHEMA_STATEMENTS = (
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_temp_bans_unban_at ON temp_bans (unban_at)",
+    # previous_state is a JSON string mapping role_id (str) -> tristate ("true"/"false"/"none")
+    # so multiple roles can each have their prior state restored on /unlock.
     """
     CREATE TABLE IF NOT EXISTS channel_locks (
         guild_id INTEGER NOT NULL,
@@ -50,7 +64,6 @@ SCHEMA_STATEMENTS = (
     )
     """,
 )
-
 
 # Columns added after the first release. CREATE TABLE IF NOT EXISTS won't add these to an
 # existing database, so they're applied separately on every startup.
@@ -67,9 +80,35 @@ async def _apply_column_migrations(connection: aiosqlite.Connection) -> None:
             await connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
 
 
+def _warn_if_ephemeral() -> None:
+    """Log a clear warning if the database path looks like ephemeral storage.
+
+    On Railway (and most PaaS platforms) the container filesystem resets on every deploy,
+    so any SQLite file stored there is wiped along with all case history. The fix is to
+    attach a Volume and set DATABASE_PATH to a path on it (e.g. /data/moderation.db).
+    """
+    import logging
+    logger = logging.getLogger("modbot.database")
+
+    abs_path = os.path.abspath(DATABASE_PATH)
+
+    # Paths that survive Railway redeploys are typically on a mounted volume (/data, /mnt, etc.)
+    # A relative path or /app/* almost certainly means ephemeral storage.
+    looks_persistent = any(abs_path.startswith(prefix) for prefix in ("/data", "/mnt", "/var", "/home"))
+    if not looks_persistent:
+        logger.warning(
+            "DATABASE_PATH=%r resolves to %r which looks like ephemeral storage. "
+            "Case history will be LOST on every restart/redeploy. "
+            "Attach a Railway Volume and set DATABASE_PATH=/data/moderation.db to make it persistent.",
+            DATABASE_PATH,
+            abs_path,
+        )
+
+
 async def connect_database() -> None:
     """Open the shared connection and apply the schema. Call once at startup."""
     global _connection
+    _warn_if_ephemeral()
     _connection = await aiosqlite.connect(DATABASE_PATH)
     _connection.row_factory = aiosqlite.Row
 
@@ -268,7 +307,36 @@ async def set_warn_thresholds(
     )
 
 
-# --- Temporary bans -------------------------------------------------------------
+# --- Lockdown roles (multiple per guild) -------------------------------------
+
+async def get_lockdown_role_ids(guild_id: int) -> list[int]:
+    rows = await _fetch_all(
+        "SELECT role_id FROM lockdown_roles WHERE guild_id = ? ORDER BY role_id",
+        (guild_id,),
+    )
+    return [row["role_id"] for row in rows]
+
+
+async def add_lockdown_role(guild_id: int, role_id: int) -> None:
+    await _execute(
+        "INSERT OR IGNORE INTO lockdown_roles (guild_id, role_id) VALUES (?, ?)",
+        (guild_id, role_id),
+    )
+
+
+async def remove_lockdown_role(guild_id: int, role_id: int) -> bool:
+    changed = await _execute(
+        "DELETE FROM lockdown_roles WHERE guild_id = ? AND role_id = ?",
+        (guild_id, role_id),
+    )
+    return changed > 0
+
+
+async def clear_lockdown_roles(guild_id: int) -> None:
+    await _execute("DELETE FROM lockdown_roles WHERE guild_id = ?", (guild_id,))
+
+
+# --- Temporary bans ----------------------------------------------------------
 
 async def add_temp_ban(guild_id: int, user_id: int, unban_at: datetime) -> None:
     await _execute(
@@ -292,35 +360,38 @@ async def get_expired_temp_bans(now: datetime) -> list[aiosqlite.Row]:
     )
 
 
-# --- Channel lock state ----------------------------------------------------------
+# --- Channel lock state -------------------------------------------------------
+# previous_state is stored as a JSON object mapping role_id (str) -> tristate string.
+# This lets /lockdown snapshot per-role permission states and /unlock restore each one.
 
-async def save_channel_lock(guild_id: int, channel_id: int, previous_state: str) -> None:
+async def save_channel_lock(guild_id: int, channel_id: int, role_states: dict[int, str]) -> None:
     await _execute(
         """
         INSERT INTO channel_locks (guild_id, channel_id, previous_state)
         VALUES (?, ?, ?)
         ON CONFLICT (guild_id, channel_id) DO UPDATE SET previous_state = excluded.previous_state
         """,
-        (guild_id, channel_id, previous_state),
+        (guild_id, channel_id, json.dumps({str(k): v for k, v in role_states.items()})),
     )
 
 
-async def pop_channel_lock(guild_id: int, channel_id: int) -> str | None:
+async def pop_channel_lock(guild_id: int, channel_id: int) -> dict[int, str] | None:
+    """Returns {role_id: tristate_string} or None if no lock was recorded."""
     row = await _fetch_one(
         "SELECT previous_state FROM channel_locks WHERE guild_id = ? AND channel_id = ?",
         (guild_id, channel_id),
     )
     if row is None:
         return None
-
     await _execute("DELETE FROM channel_locks WHERE guild_id = ? AND channel_id = ?", (guild_id, channel_id))
-    return row["previous_state"]
+    try:
+        return {int(k): v for k, v in json.loads(row["previous_state"]).items()}
+    except (json.JSONDecodeError, ValueError):
+        # Pre-migration row stored a plain string, not JSON. Discard it gracefully.
+        return None
 
 
 # --- Health checks (used by the debug cog) -----------------------------------
-
-import time as _time
-
 
 async def check_connection() -> tuple[bool, str]:
     """Ping the database with a lightweight query and return (ok, detail)."""
