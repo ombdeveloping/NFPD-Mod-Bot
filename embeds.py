@@ -156,6 +156,41 @@ def build_case_line(row, guild: discord.Guild) -> tuple[str, str]:
     return name, value
 
 
+
+NFPD_APPEAL_URL = "https://discord.gg/xnKvzXw5Vd"
+
+
+def build_ban_dm_embed(
+    reason: str,
+    *,
+    is_global: bool = False,
+    unban_at: str | None = None,
+) -> discord.Embed:
+    """A professional ban DM specific to NFPD, with optional expiry field for temp-bans.
+
+    Separate from build_dm_notice_embed so the appeal link and branding can be
+    applied consistently without complicating the generic notice path.
+    """
+    scope = "all NFPD servers" if is_global else "North Florida City Police Department"
+    embed = discord.Embed(
+        title="🛑  You have been banned",
+        description=f"You have been banned from **{scope}**.",
+        color=DANGER_COLOR,
+        timestamp=discord.utils.utcnow(),
+    )
+    embed.add_field(name="Reason", value=clamp(reason), inline=False)
+    if unban_at is not None:
+        embed.add_field(name="Ban expires", value=unban_at, inline=False)
+    else:
+        embed.add_field(name="Duration", value="Permanent", inline=False)
+    embed.add_field(
+        name="Appeals",
+        value=f"If you believe this ban was issued in error, you may appeal by joining the NFPD Appeals server.",
+        inline=False,
+    )
+    embed.set_footer(text="North Florida City Police Department", icon_url=BRAND_ICON_URL)
+    return embed
+
 def build_notice_embed(message: str, *, success: bool = True) -> discord.Embed:
     return discord.Embed(
         description=clamp(message, EMBED_DESCRIPTION_LIMIT, empty="Done."),

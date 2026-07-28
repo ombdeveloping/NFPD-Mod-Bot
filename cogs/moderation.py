@@ -6,12 +6,13 @@ from discord import app_commands
 from discord.ext import commands
 
 from database import add_temp_ban, get_guild_settings, get_warn_count, remove_temp_ban
-from embeds import audit_reason, build_dm_notice_embed, build_notice_embed
+from embeds import audit_reason, build_ban_dm_embed, build_dm_notice_embed, build_notice_embed
 from guards import refusal_reason
 from modlog import announce_case, record_case, try_dm
+from views import BanAppealView
 
 MAX_TIMEOUT_MINUTES = 40320  # Discord's own cap: 28 days
-MAX_TEMPBAN_MINUTES = 525600  # 1 year - generous, but bounded so a typo can't overflow a datetime
+MAX_TEMPBAN_MINUTES = 525600  # 1 year
 
 
 async def notify_member(member: discord.Member, action_type: str, guild_name: str, reason: str) -> None:
@@ -104,7 +105,8 @@ class Moderation(commands.Cog):
             return
 
         await ctx.defer()
-        await notify_member(member, "ban", ctx.guild.name, reason)
+        # DM the ban notice with the appeal button before removing them from the server.
+        await try_dm(member, build_ban_dm_embed(reason), BanAppealView())
         succeeded = await perform_or_report(
             ctx, "ban", member.ban(reason=audit_reason(ctx.author, "Ban", reason))
         )
@@ -134,16 +136,18 @@ class Moderation(commands.Cog):
             return
 
         await ctx.defer()
-        await notify_member(member, "ban", ctx.guild.name, reason)
+        unban_at = discord.utils.utcnow() + timedelta(minutes=duration_minutes)
+        # Show the expiry time in the DM so they know exactly when the ban lifts.
+        expiry_str = discord.utils.format_dt(unban_at, style="F")
+        await try_dm(member, build_ban_dm_embed(reason, unban_at=expiry_str), BanAppealView())
+
         succeeded = await perform_or_report(
             ctx, "ban", member.ban(reason=audit_reason(ctx.author, "Tempban", reason))
         )
         if not succeeded:
             return
 
-        unban_at = discord.utils.utcnow() + timedelta(minutes=duration_minutes)
         await add_temp_ban(ctx.guild.id, member.id, unban_at)
-
         embed = await record_case(ctx.guild, member, ctx.author, "ban", reason)
         embed.add_field(name="Expires", value=discord.utils.format_dt(unban_at, style="R"), inline=True)
         await ctx.send(embed=embed)

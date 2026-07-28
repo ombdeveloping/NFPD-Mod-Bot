@@ -6,9 +6,10 @@ from discord import app_commands
 from discord.ext import commands
 
 from config import APPROVED_GUILD_IDS, GLOBAL_ACTION_ROLE_IDS, OWNER_IDS
-from embeds import audit_reason, build_dm_notice_embed, build_notice_embed, build_summary_embed
+from embeds import audit_reason, build_ban_dm_embed, build_dm_notice_embed, build_notice_embed, build_summary_embed
 from guards import is_protected
 from modlog import record_case, try_dm
+from views import BanAppealView
 from views import ConfirmView, build_confirm_prompt
 
 MAX_TIMEOUT_MINUTES = 40320  # Discord's own cap: 28 days
@@ -47,6 +48,11 @@ def target_guilds(bot: commands.Bot) -> list[discord.Guild]:
 
 async def notify_user(user: discord.User, action_type: str, reason: str) -> None:
     await try_dm(user, build_dm_notice_embed(action_type, "all servers", reason))
+
+
+async def notify_global_ban(user: discord.User, reason: str) -> None:
+    """Send the professional NFPD ban DM with the appeal button for global bans."""
+    await try_dm(user, build_ban_dm_embed(reason, is_global=True), BanAppealView())
 
 
 async def refuse_protected(ctx: commands.Context, user: discord.User) -> bool:
@@ -133,7 +139,7 @@ class GlobalModeration(commands.Cog):
             await ctx.send(embed=build_notice_embed("Global ban cancelled.", success=False))
             return
 
-        await notify_user(user, "global_ban", reason)
+        await notify_global_ban(user, reason)
         reason_text = audit_reason(ctx.author, "Global ban", reason)
 
         await self.apply_everywhere(

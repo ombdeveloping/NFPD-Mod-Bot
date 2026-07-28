@@ -85,10 +85,10 @@ async def announce_case(
     return embed
 
 
-async def try_dm(user: discord.abc.User, embed: discord.Embed) -> bool:
+async def try_dm(user: discord.abc.User, embed: discord.Embed, view: discord.ui.View | None = None) -> bool:
     """DMs fail for closed DMs (403), bots and blocked senders (400), and deleted accounts (404)."""
     try:
-        await user.send(embed=embed)
+        await user.send(embed=embed, view=view)
         return True
     except discord.HTTPException:
         return False
