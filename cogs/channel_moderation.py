@@ -51,7 +51,7 @@ class ChannelModeration(commands.Cog):
     async def slowmode(
         self,
         ctx: commands.Context,
-        seconds: app_commands.Range[int, 0, MAX_SLOWMODE_SECONDS],
+        seconds: app_commands.Range[int, 0, 21600],
         channel: Optional[discord.TextChannel] = None,
     ):
         target = channel or ctx.channel
@@ -74,7 +74,7 @@ class ChannelModeration(commands.Cog):
     async def purge(
         self,
         ctx: commands.Context,
-        amount: app_commands.Range[int, 1, MAX_PURGE_MESSAGES],
+        amount: app_commands.Range[int, 1, 100],
         member: Optional[discord.Member] = None,
     ):
         if ctx.interaction is None:
