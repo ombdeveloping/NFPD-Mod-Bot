@@ -9,24 +9,70 @@ from embeds import build_case_embed
 logger = logging.getLogger("modbot.modlog")
 
 
+async def _resolve_log_channel(guild: discord.Guild, channel_id: int) -> discord.abc.Messageable | None:
+    """Return the log channel, falling back to an API fetch when it is not in the cache.
+
+    guild.get_channel() only checks the bot's in-memory cache. After a restart or
+    reconnect that cache can be incomplete, causing every log post to silently vanish.
+    fetch_channel() goes straight to the Discord API and always returns the real channel.
+    """
+    channel = guild.get_channel(channel_id)
+    if channel is not None and isinstance(channel, discord.abc.Messageable):
+        return channel
+
+    try:
+        channel = await guild.fetch_channel(channel_id)
+    except discord.NotFound:
+        logger.warning(
+            "Log channel %s in guild %s (%s) no longer exists - use /setlogchannel to set a new one",
+            channel_id, guild.name, guild.id,
+        )
+        return None
+    except discord.Forbidden:
+        logger.warning(
+            "Log channel %s in guild %s (%s) exists but I cannot access it (missing View Channel)",
+            channel_id, guild.name, guild.id,
+        )
+        return None
+    except discord.HTTPException as error:
+        logger.warning(
+            "Could not fetch log channel %s in guild %s (%s): %s",
+            channel_id, guild.name, guild.id, error,
+        )
+        return None
+
+    if not isinstance(channel, discord.abc.Messageable):
+        logger.warning(
+            "Log channel %s in guild %s (%s) is not a messageable type (%s)",
+            channel_id, guild.name, guild.id, type(channel).__name__,
+        )
+        return None
+
+    return channel
+
+
 async def post_to_log_channel(guild: discord.Guild, embed: discord.Embed) -> None:
     settings = await get_guild_settings(guild.id)
     channel_id = settings["log_channel_id"]
     if channel_id is None:
         return
 
-    channel = guild.get_channel(channel_id)
-    if not isinstance(channel, discord.abc.Messageable):
-        logger.warning(
-            "Log channel %s in guild %s (%s) no longer exists or is not messageable",
-            channel_id, guild.name, guild.id,
-        )
+    channel = await _resolve_log_channel(guild, channel_id)
+    if channel is None:
         return
 
     try:
         await channel.send(embed=embed)
+    except discord.Forbidden:
+        logger.warning(
+            "Missing Send Messages or Embed Links in log channel %s in guild %s (%s)",
+            channel_id, guild.name, guild.id,
+        )
     except discord.HTTPException as error:
-        logger.warning("Could not post to log channel in guild %s (%s): %s", guild.name, guild.id, error)
+        logger.warning(
+            "Could not post to log channel in guild %s (%s): %s",
+            guild.name, guild.id, error,
+        )
 
 
 async def check_log_channel(guild: discord.Guild) -> tuple[bool, str]:
@@ -38,7 +84,15 @@ async def check_log_channel(guild: discord.Guild) -> tuple[bool, str]:
 
     channel = guild.get_channel(channel_id)
     if channel is None:
-        return False, f"Configured channel `{channel_id}` no longer exists. Set a new one with /setlogchannel."
+        try:
+            channel = await guild.fetch_channel(channel_id)
+        except discord.NotFound:
+            return False, f"Configured channel `{channel_id}` no longer exists. Set a new one with /setlogchannel."
+        except discord.Forbidden:
+            return False, f"Channel `{channel_id}` exists but I cannot access it - missing View Channel permission."
+        except discord.HTTPException as error:
+            return False, f"Could not fetch channel `{channel_id}`: {error}"
+
     if not isinstance(channel, discord.abc.Messageable):
         return False, f"{channel.mention} exists but is not a type the bot can send messages to."
 

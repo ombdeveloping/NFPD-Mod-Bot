@@ -17,6 +17,7 @@ diagnostics.attach_recent_log_handler()
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
+intents.invites = True  # needed for on_invite_create/delete
 
 bot = commands.Bot(command_prefix=COMMAND_PREFIX, intents=intents, help_command=None)
 _slash_commands_synced = False
@@ -32,6 +33,7 @@ INITIAL_COGS = (
     "cogs.owner",
     "cogs.guild_guard",
     "cogs.debug",
+    "cogs.server_logs",
 )
 
 
