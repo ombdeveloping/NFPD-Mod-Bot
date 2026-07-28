@@ -98,10 +98,13 @@ def _warn_if_ephemeral() -> None:
     # A relative path or /app/* almost certainly means ephemeral storage.
     looks_persistent = any(abs_path.startswith(prefix) for prefix in ("/data", "/mnt", "/var", "/home"))
     if not looks_persistent:
-        logger.warning(
-            "DATABASE_PATH=%r resolves to %r which looks like ephemeral storage. "
-            "Case history will be LOST on every restart/redeploy. "
-            "Attach a Railway Volume and set DATABASE_PATH=/data/moderation.db to make it persistent.",
+        logger.error(
+            "\n"
+            "  *** DATABASE ON EPHEMERAL STORAGE ***\n"
+            "  DATABASE_PATH=%r resolves to %r\n"
+            "  ALL CASE HISTORY WILL BE LOST on the next restart or redeploy.\n"
+            "  FIX: Attach a Railway Volume, mount it at /data,\n"
+            "       and set DATABASE_PATH=/data/moderation.db in your env vars.\n",
             DATABASE_PATH,
             abs_path,
         )
@@ -127,6 +130,12 @@ async def connect_database() -> None:
 async def close_database() -> None:
     global _connection
     if _connection is not None:
+        # Checkpoint the WAL before closing so no committed data is left in the write-ahead log.
+        try:
+            await _connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            await _connection.commit()
+        except Exception:
+            pass
         await _connection.close()
         _connection = None
 

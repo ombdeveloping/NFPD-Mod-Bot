@@ -34,6 +34,8 @@ INITIAL_COGS = (
     "cogs.guild_guard",
     "cogs.debug",
     "cogs.server_logs",
+    "cogs.alt_detector",
+    "cogs.backup",
 )
 
 

@@ -5,7 +5,7 @@ from discord.ext import commands
 
 from database import get_guild_settings
 from embeds import base_embed
-from modlog import post_to_log_channel
+from modlog import post_to_server_log_channel
 
 ALERT_COLOR = 0xF5A524
 
@@ -33,7 +33,7 @@ class RaidProtection(commands.Cog):
         embed.set_thumbnail(url=member.display_avatar.url)
         embed.add_field(name="Account created", value=discord.utils.format_dt(member.created_at, "R"), inline=True)
         embed.add_field(name="User ID", value=f"`{member.id}`", inline=True)
-        await post_to_log_channel(member.guild, embed)
+        await post_to_server_log_channel(member.guild, embed)
 
 
 async def setup(bot: commands.Bot):
