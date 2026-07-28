@@ -1,7 +1,8 @@
 import discord
 
+import embeds as embeds_module
 from config import BRAND_NAME
-from embeds import BRAND_ICON_URL, DANGER_COLOR, NEUTRAL_COLOR, build_case_line
+from embeds import DANGER_COLOR, NEUTRAL_COLOR, build_case_line
 
 
 class ConfirmView(discord.ui.View):
@@ -75,15 +76,21 @@ class CasesPaginatorView(discord.ui.View):
         page_rows = self.case_rows[start : start + self.per_page]
 
         embed = discord.Embed(color=NEUTRAL_COLOR, timestamp=discord.utils.utcnow())
-        embed.set_author(name=f"Case History  \u2022  {self.member}", icon_url=BRAND_ICON_URL)
-
+        # Read BRAND_ICON_URL through the module at call time, not at import time.
+        # Importing it by value would bind to None permanently since set_brand_icon
+        # updates the module attribute after views.py has already been imported.
+        embed.set_author(
+            name=f"Case History  \u2022  {self.member}",
+            icon_url=embeds_module.BRAND_ICON_URL,
+        )
         for row in page_rows:
             field_name, field_value = build_case_line(row, self.guild)
             embed.add_field(name=field_name, value=field_value, inline=False)
 
         embed.set_footer(
             text=f"Page {self.page + 1} of {self.last_page + 1}  \u2022  "
-            f"{len(self.case_rows)} total  \u2022  {BRAND_NAME}"
+            f"{len(self.case_rows)} total  \u2022  {BRAND_NAME}",
+            icon_url=embeds_module.BRAND_ICON_URL,
         )
         return embed
 
@@ -123,5 +130,8 @@ def build_confirm_prompt(description: str) -> discord.Embed:
         description=description,
         color=DANGER_COLOR,
     )
-    embed.set_footer(text="This affects every server the bot is in.", icon_url=BRAND_ICON_URL)
+    embed.set_footer(
+        text="This affects every server the bot is in.",
+        icon_url=embeds_module.BRAND_ICON_URL,
+    )
     return embed

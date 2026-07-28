@@ -315,3 +315,29 @@ async def pop_channel_lock(guild_id: int, channel_id: int) -> str | None:
 
     await _execute("DELETE FROM channel_locks WHERE guild_id = ? AND channel_id = ?", (guild_id, channel_id))
     return row["previous_state"]
+
+
+# --- Health checks (used by the debug cog) -----------------------------------
+
+import time as _time
+
+
+async def check_connection() -> tuple[bool, str]:
+    """Ping the database with a lightweight query and return (ok, detail)."""
+    try:
+        started = _time.perf_counter()
+        await _fetch_one("SELECT 1")
+        elapsed_ms = (_time.perf_counter() - started) * 1000
+        return True, f"{elapsed_ms:.1f}ms"
+    except Exception as error:
+        return False, str(error)
+
+
+async def get_total_case_count() -> int:
+    row = await _fetch_one("SELECT COUNT(*) AS total FROM cases")
+    return row["total"] if row else 0
+
+
+async def get_active_temp_ban_count() -> int:
+    row = await _fetch_one("SELECT COUNT(*) AS total FROM temp_bans")
+    return row["total"] if row else 0

@@ -5,7 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from database import get_guild_settings, pop_channel_lock, save_channel_lock
-from embeds import MUTED_COLOR, NEUTRAL_COLOR, SUCCESS_COLOR, base_embed, build_notice_embed
+from embeds import MUTED_COLOR, NEUTRAL_COLOR, SUCCESS_COLOR, base_embed, build_notice_embed, clamp
 from modlog import post_to_log_channel
 
 MAX_SLOWMODE_SECONDS = 21600  # Discord's own cap: 6 hours
@@ -35,16 +35,13 @@ class ChannelModeration(commands.Cog):
     @commands.guild_only()
     @commands.has_permissions(manage_channels=True)
     @commands.bot_has_permissions(manage_channels=True)
-    async def slowmode(self, ctx: commands.Context, seconds: int, channel: Optional[discord.TextChannel] = None):
+    async def slowmode(
+        self,
+        ctx: commands.Context,
+        seconds: app_commands.Range[int, 0, MAX_SLOWMODE_SECONDS],
+        channel: Optional[discord.TextChannel] = None,
+    ):
         target = channel or ctx.channel
-        if not 0 <= seconds <= MAX_SLOWMODE_SECONDS:
-            await ctx.send(
-                embed=build_notice_embed(
-                    f"Delay must be between 0 and {MAX_SLOWMODE_SECONDS} seconds (6 hours).", success=False
-                )
-            )
-            return
-
         await target.edit(slowmode_delay=seconds)
         message = (
             f"Slowmode disabled in {target.mention}."
@@ -61,14 +58,12 @@ class ChannelModeration(commands.Cog):
     @commands.guild_only()
     @commands.has_permissions(manage_messages=True)
     @commands.bot_has_permissions(manage_messages=True, read_message_history=True)
-    async def purge(self, ctx: commands.Context, amount: int, member: Optional[discord.Member] = None):
-        if not 1 <= amount <= MAX_PURGE_MESSAGES:
-            await ctx.send(
-                embed=build_notice_embed(f"Amount must be between 1 and {MAX_PURGE_MESSAGES}.", success=False)
-            )
-            return
-
-        # Remove the invoking message first so it isn't counted or left dangling.
+    async def purge(
+        self,
+        ctx: commands.Context,
+        amount: app_commands.Range[int, 1, MAX_PURGE_MESSAGES],
+        member: Optional[discord.Member] = None,
+    ):
         if ctx.interaction is None:
             try:
                 await ctx.message.delete()
@@ -77,13 +72,16 @@ class ChannelModeration(commands.Cog):
         else:
             await ctx.defer(ephemeral=True)
 
-        # purge() calls check() on every message, so this must be callable even with no member filter.
         if member is None:
             message_filter = lambda message: True
         else:
             message_filter = lambda message: message.author.id == member.id
 
-        deleted = await ctx.channel.purge(limit=amount, check=message_filter)
+        try:
+            deleted = await ctx.channel.purge(limit=amount, check=message_filter)
+        except discord.HTTPException as error:
+            await ctx.send(embed=build_notice_embed(f"Couldn't purge messages: `{error}`", success=False))
+            return
 
         scope = f" from {member.mention}" if member else ""
         embed = base_embed(
@@ -117,13 +115,17 @@ class ChannelModeration(commands.Cog):
         locked_role = await self.resolve_lockdown_role(ctx.guild)
         overwrite = target.overwrites_for(locked_role)
 
-        # Remember the prior value so unlock restores it rather than assuming "allow".
         await save_channel_lock(ctx.guild.id, target.id, TRISTATE_TO_TEXT[overwrite.send_messages])
         overwrite.send_messages = False
-        await target.set_permissions(locked_role, overwrite=overwrite, reason=reason)
+
+        try:
+            await target.set_permissions(locked_role, overwrite=overwrite, reason=clamp(reason, 512))
+        except discord.HTTPException as error:
+            await ctx.send(embed=build_notice_embed(f"Couldn't lock {target.mention}: `{error}`", success=False))
+            return
 
         embed = base_embed("Channel Locked", MUTED_COLOR, f"{locked_role.mention} can no longer post in {target.mention}.")
-        embed.add_field(name="Reason", value=reason, inline=False)
+        embed.add_field(name="Reason", value=clamp(reason), inline=False)
         embed.add_field(name="Locked by", value=ctx.author.mention, inline=True)
         await ctx.send(embed=embed)
         await post_to_log_channel(ctx.guild, embed)
@@ -140,7 +142,12 @@ class ChannelModeration(commands.Cog):
         saved_state = await pop_channel_lock(ctx.guild.id, target.id)
         overwrite = target.overwrites_for(locked_role)
         overwrite.send_messages = TEXT_TO_TRISTATE.get(saved_state) if saved_state else None
-        await target.set_permissions(locked_role, overwrite=overwrite)
+
+        try:
+            await target.set_permissions(locked_role, overwrite=overwrite)
+        except discord.HTTPException as error:
+            await ctx.send(embed=build_notice_embed(f"Couldn't unlock {target.mention}: `{error}`", success=False))
+            return
 
         description = f"{locked_role.mention} can post in {target.mention} again."
         if saved_state is None:

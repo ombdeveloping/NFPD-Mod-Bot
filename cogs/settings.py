@@ -2,14 +2,9 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from database import (
-    get_guild_settings,
-    set_lockdown_role,
-    set_log_channel,
-    set_raid_protection,
-    set_warn_thresholds,
-)
+from database import get_guild_settings, set_lockdown_role, set_log_channel, set_raid_protection, set_warn_thresholds
 from embeds import NEUTRAL_COLOR, base_embed, build_notice_embed
+from modlog import check_log_channel
 
 
 def describe_threshold(count: int | None, suffix: str = "") -> str:
@@ -25,7 +20,6 @@ class Settings(commands.Cog):
     @commands.has_permissions(manage_guild=True)
     async def settings(self, ctx: commands.Context):
         config = await get_guild_settings(ctx.guild.id)
-
         log_channel = ctx.guild.get_channel(config["log_channel_id"]) if config["log_channel_id"] else None
         lockdown_role = ctx.guild.get_role(config["lockdown_role_id"]) if config["lockdown_role_id"] else None
         raid_hours = config["raid_min_account_age_hours"]
@@ -60,7 +54,30 @@ class Settings(commands.Cog):
     @commands.has_permissions(manage_guild=True)
     async def setlogchannel(self, ctx: commands.Context, channel: discord.TextChannel):
         await set_log_channel(ctx.guild.id, channel.id)
-        await ctx.send(embed=build_notice_embed(f"Mod-log channel set to {channel.mention}."))
+        ok, detail = await check_log_channel(ctx.guild)
+        message = f"Mod-log channel set to {channel.mention}."
+        if not ok:
+            message += f"\n\u26A0 {detail}"
+        await ctx.send(embed=build_notice_embed(message, success=ok))
+
+    @commands.hybrid_command(name="testlog", description="Send a test message to the configured mod-log channel")
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
+    async def testlog(self, ctx: commands.Context):
+        ok, detail = await check_log_channel(ctx.guild)
+        if not ok:
+            await ctx.send(embed=build_notice_embed(detail, success=False))
+            return
+
+        config = await get_guild_settings(ctx.guild.id)
+        channel = ctx.guild.get_channel(config["log_channel_id"])
+        try:
+            await channel.send(embed=base_embed("Test Message", NEUTRAL_COLOR, "If you can see this, logging works."))
+        except discord.HTTPException as error:
+            await ctx.send(embed=build_notice_embed(f"Channel looked reachable, but sending failed: `{error}`", success=False))
+            return
+
+        await ctx.send(embed=build_notice_embed(f"Test message sent to {channel.mention}."))
 
     @commands.hybrid_command(name="setlockdownrole", description="Set which role /lockdown silences")
     @app_commands.describe(role="The role that loses send-message access during a lockdown")

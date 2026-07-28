@@ -34,10 +34,17 @@ ACTION_STYLES = {
 
 FALLBACK_STYLE = ActionStyle(NEUTRAL_COLOR, "\U0001F4CB", "Action", "")
 
-AUDIT_REASON_LIMIT = 512
+# Set once at startup via set_brand_icon() so every embed carries the bot's own avatar.
+BRAND_ICON_URL: str | None = None
 
+AUDIT_REASON_LIMIT = 512
 EMBED_FIELD_LIMIT = 1024
 EMBED_DESCRIPTION_LIMIT = 4096
+
+
+def set_brand_icon(url: str) -> None:
+    global BRAND_ICON_URL
+    BRAND_ICON_URL = url
 
 
 def clamp(text: str | None, limit: int = EMBED_FIELD_LIMIT, *, empty: str = "*Not specified*") -> str:
@@ -47,6 +54,19 @@ def clamp(text: str | None, limit: int = EMBED_FIELD_LIMIT, *, empty: str = "*No
     if len(text) <= limit:
         return text
     return text[: limit - 3].rstrip() + "..."
+
+
+def audit_reason(actor: discord.abc.User, action_label: str, reason: str) -> str:
+    """Build a moderator-attributed reason string that fits Discord's audit-log limit.
+
+    The user ID is included alongside the name so audit log entries remain attributable
+    even if the moderator later changes their username.
+    """
+    prefix = f"{action_label} by {actor} ({actor.id}): "
+    available = AUDIT_REASON_LIMIT - len(prefix)
+    if available <= 0:
+        return clamp(reason, AUDIT_REASON_LIMIT, empty="No reason provided")
+    return prefix + clamp(reason, available, empty="No reason provided")
 
 
 def style_for(action_type: str) -> ActionStyle:
@@ -64,7 +84,7 @@ def format_timestamp(iso_string: str, style: str = "f") -> str:
 
 def base_embed(title: str, color: int, description: str | None = None) -> discord.Embed:
     embed = discord.Embed(title=title, description=description, color=color, timestamp=discord.utils.utcnow())
-    embed.set_footer(text=BRAND_NAME)
+    embed.set_footer(text=BRAND_NAME, icon_url=BRAND_ICON_URL)
     return embed
 
 
@@ -77,11 +97,12 @@ def build_case_embed(
 ) -> discord.Embed:
     style = style_for(action_type)
     embed = discord.Embed(color=style.color, timestamp=discord.utils.utcnow())
-    embed.set_author(name=f"{style.icon}  {style.title}", icon_url=target.display_avatar.url)
+    embed.set_author(name=f"{style.icon}  {style.title}", icon_url=BRAND_ICON_URL)
+    embed.set_thumbnail(url=target.display_avatar.url)
     embed.description = f"**{target}**\n`{target.id}`"
     embed.add_field(name="Moderator", value=moderator.mention, inline=True)
     embed.add_field(name="Reason", value=clamp(reason), inline=False)
-    embed.set_footer(text=f"Case #{case_id}  \u2022  {BRAND_NAME}")
+    embed.set_footer(text=f"Case #{case_id}  \u2022  {BRAND_NAME}", icon_url=BRAND_ICON_URL)
     return embed
 
 
@@ -94,7 +115,7 @@ def build_dm_notice_embed(action_type: str, location_name: str, reason: str) -> 
         timestamp=discord.utils.utcnow(),
     )
     embed.add_field(name="Reason", value=clamp(reason), inline=False)
-    embed.set_footer(text=BRAND_NAME)
+    embed.set_footer(text=BRAND_NAME, icon_url=BRAND_ICON_URL)
     return embed
 
 
@@ -106,9 +127,9 @@ def build_summary_embed(
 ) -> discord.Embed:
     style = style_for(action_type)
     embed = discord.Embed(color=style.color, timestamp=discord.utils.utcnow())
-    embed.set_author(name=f"{style.icon}  {style.title}", icon_url=user.display_avatar.url)
+    embed.set_author(name=f"{style.icon}  {style.title}", icon_url=BRAND_ICON_URL)
+    embed.set_thumbnail(url=user.display_avatar.url)
     embed.description = f"**{user}**\n`{user.id}`"
-
     embed.add_field(
         name=f"Applied in {len(affected)} server(s)",
         value=clamp("\n".join(f"- {name}" for name in affected), empty="*None*"),
@@ -120,8 +141,7 @@ def build_summary_embed(
             value=clamp("\n".join(f"- {name}" for name in failed)),
             inline=False,
         )
-
-    embed.set_footer(text=BRAND_NAME)
+    embed.set_footer(text=BRAND_NAME, icon_url=BRAND_ICON_URL)
     return embed
 
 
@@ -130,7 +150,6 @@ def build_case_line(row, guild: discord.Guild) -> tuple[str, str]:
     style = style_for(row["action_type"])
     moderator = guild.get_member(row["moderator_id"])
     moderator_name = moderator.mention if moderator else f"`{row['moderator_id']}`"
-
     name = f"{style.icon}  Case #{row['id']}  \u2022  {style.title}"
     reason = clamp(row["reason"], limit=800)
     value = f"{reason}\n{moderator_name}  \u2022  {format_timestamp(row['created_at'], 'R')}"
@@ -139,15 +158,6 @@ def build_case_line(row, guild: discord.Guild) -> tuple[str, str]:
 
 def build_notice_embed(message: str, *, success: bool = True) -> discord.Embed:
     return discord.Embed(
-        description=message,
+        description=clamp(message, EMBED_DESCRIPTION_LIMIT, empty="Done."),
         color=SUCCESS_COLOR if success else DANGER_COLOR,
     )
-
-BRAND_ICON_URL=None
-def set_brand_icon(url:str):
-    global BRAND_ICON_URL
-    BRAND_ICON_URL=url
-
-def audit_reason(moderator, action:str, reason:str)->str:
-    who=getattr(moderator,"name",str(moderator))
-    return f"{action} by {who}: {reason or 'No reason provided.'}"
