@@ -26,8 +26,8 @@ async def resolve_invite(guild: discord.Guild) -> str | None:
         try:
             invite = await channel.create_invite(
                 max_age=86400,
-                max_uses=0,
-                unique=False,
+                max_uses=1,
+                unique=True,
                 reason="Unapproved server alert - requested by bot owner",
             )
             return invite.url
@@ -36,7 +36,7 @@ async def resolve_invite(guild: discord.Guild) -> str | None:
     return None
 
 
-async def post_in_server(guild: discord.Guild, message: str) -> bool:
+async def post_in_server(guild: discord.Guild, message: str) -> None:
     """Post a message in the server's system channel, or the first writable text channel."""
     candidates = []
     if guild.system_channel is not None:
@@ -44,17 +44,63 @@ async def post_in_server(guild: discord.Guild, message: str) -> bool:
     candidates.extend(ch for ch in guild.text_channels if ch != guild.system_channel)
 
     if guild.me is None:
-        return False
+        return
 
     for channel in candidates:
         if not channel.permissions_for(guild.me).send_messages:
             continue
         try:
             await channel.send(message)
-            return True
+            return
         except discord.HTTPException:
             continue
-    return False
+
+
+async def get_inviter(guild: discord.Guild, bot_user_id: int) -> discord.User | None:
+    """Look up who added the bot via the audit log."""
+    try:
+        async for entry in guild.audit_logs(limit=5, action=discord.AuditLogAction.bot_add):
+            if entry.target and entry.target.id == bot_user_id:
+                return entry.user
+    except discord.Forbidden:
+        pass
+    return None
+
+
+def build_unapproved_embed(
+    guild: discord.Guild,
+    inviter: discord.User | None,
+    invite_url: str | None,
+    *,
+    leaving: bool,
+) -> discord.Embed:
+    embed = discord.Embed(
+        title="Unapproved Server Join",
+        color=0xDC2626,
+        timestamp=discord.utils.utcnow(),
+    )
+
+    server_value = f"{guild.name}\n`{guild.id}`"
+    embed.add_field(name="Server", value=server_value, inline=True)
+    embed.add_field(name="Members", value=str(guild.member_count or 0), inline=True)
+
+    if inviter:
+        embed.add_field(
+            name="Added by",
+            value=f"{inviter}\n`{inviter.id}`",
+            inline=True,
+        )
+    else:
+        embed.add_field(name="Added by", value="Unknown", inline=True)
+
+    embed.add_field(
+        name="Invite (24h)",
+        value=invite_url if invite_url else "Could not generate invite",
+        inline=False,
+    )
+
+    embed.set_footer(text="Leaving automatically." if leaving else "Auto-leave disabled - bot will remain.")
+    return embed
 
 
 class GuildGuard(commands.Cog):
@@ -66,11 +112,11 @@ class GuildGuard(commands.Cog):
     def is_approved(self, guild: discord.Guild) -> bool:
         return not APPROVED_GUILD_IDS or guild.id in APPROVED_GUILD_IDS
 
-    async def alert_owners(self, message: str) -> None:
+    async def alert_owners(self, embed: discord.Embed) -> None:
         for owner_id in OWNER_IDS:
             try:
                 owner = self.bot.get_user(owner_id) or await self.bot.fetch_user(owner_id)
-                await owner.send(message)
+                await owner.send(embed=embed)
             except discord.HTTPException:
                 continue
 
@@ -79,7 +125,10 @@ class GuildGuard(commands.Cog):
             await guild.leave()
             logger.warning("Left unapproved server %s (%s)", guild.name, guild.id)
         except discord.HTTPException as error:
-            logger.warning("Tried to leave unapproved server %s (%s) but failed: %s", guild.name, guild.id, error)
+            logger.warning(
+                "Tried to leave unapproved server %s (%s) but failed: %s",
+                guild.name, guild.id, error,
+            )
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -95,30 +144,39 @@ class GuildGuard(commands.Cog):
         logger.info("Added to server: %s (%s), owner %s", guild.name, guild.id, guild.owner_id)
 
         if self.is_approved(guild):
-            await self.alert_owners(f"Added to approved server **{guild.name}** (`{guild.id}`).")
+            await self._alert_approved(guild)
             return
 
-        # Try to get an invite before potentially leaving - can't generate one after the bot has left.
+        # Fetch invite before potentially leaving - can't create one after the bot has left.
         invite_url = await resolve_invite(guild)
+        inviter = await get_inviter(guild, self.bot.user.id)
 
-        # Post the unapproved notice in the server itself so the server owner sees it.
+        # Post notice in the server so the server owner knows why the bot left.
         await post_in_server(guild, UNAPPROVED_SERVER_MESSAGE)
 
-        # Alert owners via DM with full details.
-        owner_lines = [
-            f"Added to **unapproved** server **{guild.name}** (`{guild.id}`),",
-            f"owner ID `{guild.owner_id}`, {guild.member_count} members.",
-        ]
-        if invite_url:
-            owner_lines.append(f"Invite (24h): {invite_url}")
-        else:
-            owner_lines.append("Could not generate an invite - no channel with Create Invite permission.")
-
-        owner_lines.append("Leaving automatically." if LEAVE_UNAPPROVED_GUILDS else "Global actions will not apply there.")
-        await self.alert_owners("\n".join(owner_lines))
+        # DM all owners with the formatted embed.
+        embed = build_unapproved_embed(
+            guild, inviter, invite_url, leaving=LEAVE_UNAPPROVED_GUILDS
+        )
+        await self.alert_owners(embed)
 
         if LEAVE_UNAPPROVED_GUILDS:
             await self._leave(guild)
+
+    async def _alert_approved(self, guild: discord.Guild) -> None:
+        embed = discord.Embed(
+            title="Joined Approved Server",
+            color=0x16A34A,
+            timestamp=discord.utils.utcnow(),
+        )
+        embed.add_field(name="Server", value=f"{guild.name}\n`{guild.id}`", inline=True)
+        embed.add_field(name="Members", value=str(guild.member_count or 0), inline=True)
+        for owner_id in OWNER_IDS:
+            try:
+                owner = self.bot.get_user(owner_id) or await self.bot.fetch_user(owner_id)
+                await owner.send(embed=embed)
+            except discord.HTTPException:
+                continue
 
 
 async def setup(bot: commands.Bot):

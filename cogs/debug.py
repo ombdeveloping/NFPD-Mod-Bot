@@ -154,7 +154,7 @@ class Debug(commands.Cog):
                 f"BOT_TOKEN: {'set' if config.BOT_TOKEN else 'MISSING'} (redacted)\n"
                 f"COMMAND_PREFIX: `{config.COMMAND_PREFIX}`\n"
                 f"BRAND_NAME: `{config.BRAND_NAME}`\n"
-                f"DATABASE_PATH: `{config.DATABASE_PATH}`"
+                f"DATABASE_URL: `{config.DATABASE_URL[:30]}...` (PostgreSQL)"
             ),
             inline=False,
         )

@@ -55,4 +55,11 @@ PROTECTED_USER_IDS = _parse_id_list("PROTECTED_USER_IDS")
 # Users who may not USE the bot at all. Every command refuses for them.
 BLOCKED_USER_IDS = _parse_id_list("BLOCKED_USER_IDS")
 
-DATABASE_PATH = os.environ.get("DATABASE_PATH", "moderation.db")
+# PostgreSQL connection string - injected automatically by Railway's PostgreSQL plugin.
+# In Railway: + New > Database > Add PostgreSQL, then DATABASE_URL appears automatically.
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+if not DATABASE_URL:
+    _fail(
+        "DATABASE_URL is required. "
+        "Add a PostgreSQL plugin to your Railway service and it will be injected automatically."
+    )
