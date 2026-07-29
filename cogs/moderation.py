@@ -126,7 +126,7 @@ class Moderation(commands.Cog):
         self,
         ctx: commands.Context,
         member: discord.Member,
-        duration_minutes: app_commands.Range[int, 1, MAX_TEMPBAN_MINUTES],
+        duration_minutes: app_commands.Range[int, 1, 525600],
         *,
         reason: str = "No reason provided",
     ):
@@ -201,7 +201,7 @@ class Moderation(commands.Cog):
         self,
         ctx: commands.Context,
         member: discord.Member,
-        duration_minutes: app_commands.Range[int, 1, MAX_TIMEOUT_MINUTES],
+        duration_minutes: app_commands.Range[int, 1, 40320],
         *,
         reason: str = "No reason provided",
     ):

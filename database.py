@@ -119,7 +119,16 @@ async def connect_database() -> None:
 
     # WAL lets reads proceed during a write, so the temp-ban loop never blocks a lookup.
     await _connection.execute("PRAGMA journal_mode=WAL")
+    # NORMAL is safe with WAL and much faster than FULL (the default).
     await _connection.execute("PRAGMA synchronous=NORMAL")
+    # Enforce referential integrity on every write.
+    await _connection.execute("PRAGMA foreign_keys=ON")
+    # 64 MB page cache - reduces disk I/O for repeated reads.
+    await _connection.execute("PRAGMA cache_size=-64000")
+    # Keep temp tables in memory rather than writing them to disk.
+    await _connection.execute("PRAGMA temp_store=MEMORY")
+    # 256 MB memory-mapped I/O for faster sequential reads.
+    await _connection.execute("PRAGMA mmap_size=268435456")
 
     for statement in SCHEMA_STATEMENTS:
         await _connection.execute(statement)

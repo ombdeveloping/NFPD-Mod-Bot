@@ -31,7 +31,8 @@ class ScheduledTasks(commands.Cog):
             except (discord.NotFound, discord.Forbidden):
                 continue
 
-            await record_case(guild, user, self.bot.user, "unban", "Temporary ban expired")
+            if self.bot.user is not None:
+                await record_case(guild, user, self.bot.user, "unban", "Temporary ban expired")
 
     @expire_temp_bans.before_loop
     async def before_expire_temp_bans(self) -> None:

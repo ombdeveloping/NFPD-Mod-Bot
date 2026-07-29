@@ -174,7 +174,7 @@ class GlobalModeration(commands.Cog):
         self,
         ctx: commands.Context,
         user: discord.User,
-        duration_minutes: app_commands.Range[int, 1, MAX_TIMEOUT_MINUTES],
+        duration_minutes: app_commands.Range[int, 1, 40320],
         *,
         reason: str = "No reason provided",
     ):
