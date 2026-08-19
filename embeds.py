@@ -185,7 +185,10 @@ def build_ban_dm_embed(
         embed.add_field(name="Duration", value="Permanent", inline=False)
     embed.add_field(
         name="Appeals",
-        value=f"If you believe this ban was issued in error, you may appeal by joining the NFPD Appeals server.",
+        value=(
+            "If you believe this ban was issued in error, you may appeal by joining the "
+            f"[NFPD Appeals server]({NFPD_APPEAL_URL})."
+        ),
         inline=False,
     )
     embed.set_footer(text="North Florida City Police Department", icon_url=BRAND_ICON_URL)

@@ -5,6 +5,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+import embeds as embeds_module
 from database import (
     delete_case,
     get_action_counts,
@@ -17,7 +18,6 @@ from database import (
 )
 from embeds import (
     AUDIT_REASON_LIMIT,
-    BRAND_ICON_URL,
     MUTED_COLOR,
     NEUTRAL_COLOR,
     base_embed,
@@ -83,7 +83,7 @@ class CaseManagement(commands.Cog):
         style = style_for(case_row["action_type"])
 
         embed = discord.Embed(color=style.color, timestamp=discord.utils.utcnow())
-        embed.set_author(name=f"{style.icon}  Case #{case_row['id']}", icon_url=BRAND_ICON_URL)
+        embed.set_author(name=f"{style.icon}  Case #{case_row['id']}", icon_url=embeds_module.BRAND_ICON_URL)
         embed.set_thumbnail(url=target.display_avatar.url)
         embed.description = f"**{target}**\n`{target.id}`"
         embed.add_field(name="Action", value=style.title, inline=True)

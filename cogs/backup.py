@@ -269,7 +269,8 @@ class Backup(commands.Cog):
             await ctx.send(embed=build_notice_embed("Restore cancelled.", success=False))
             return
 
-        await ctx.defer()
+        # The interaction was already responded to by the confirm prompt above;
+        # a second defer here would raise InteractionResponded on slash usage.
         reason = f"Server restore by {ctx.author} ({ctx.author.id}) from {original_guild} backup {taken_at}"
 
         roles_created, roles_failed = await _restore_roles(ctx.guild, snapshot["roles"], reason)

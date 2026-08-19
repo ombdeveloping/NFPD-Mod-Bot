@@ -234,11 +234,18 @@ class Moderation(commands.Cog):
             return
 
         await ctx.defer()
-        succeeded = await perform_or_report(
-            ctx, "unmute", member.timeout(None, reason=audit_reason(ctx.author, "Unmute", reason))
-        )
-        if succeeded:
-            await announce_case(ctx, member, "unmute", reason)
+        try:
+            await member.timeout(None, reason=audit_reason(ctx.author, "Unmute", reason))
+        except discord.HTTPException as error:
+            await ctx.send(
+                embed=build_notice_embed(
+                    f"Couldn't unmute {member.mention}: `{error}`. "
+                    "Check my permissions and role position.",
+                    success=False,
+                )
+            )
+            return
+        await announce_case(ctx, member, "unmute", reason)
 
 
 async def setup(bot: commands.Bot):

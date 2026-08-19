@@ -100,7 +100,9 @@ class ChannelModeration(commands.Cog):
             f"Deleted **{len(deleted)}** message(s){scope} in {ctx.channel.mention}.",
         )
         embed.add_field(name="Purged by", value=ctx.author.mention, inline=True)
-        if len(deleted) < amount:
+        # Only warn about the 14-day limit when no member filter was in play;
+        # otherwise a shortfall usually just means the filter didn't match, not an age cap.
+        if member is None and len(deleted) < amount:
             embed.set_footer(text="Discord can only bulk delete messages under 14 days old.")
 
         await ctx.send(embed=embed)
