@@ -13,6 +13,8 @@ from database import (
 from embeds import NEUTRAL_COLOR, base_embed, build_notice_embed
 from modlog import _resolve_channel, check_log_channel, check_server_log_channel
 
+MAX_TIMEOUT_MINUTES = 40320  # Discord's own cap on a timeout: 28 days
+
 
 def describe_threshold(count: int | None, suffix: str = "") -> str:
     return f"{count} warns{suffix}" if count else "Disabled"
@@ -198,11 +200,31 @@ class Settings(commands.Cog):
         kick_at: int = 0,
         ban_at: int = 0,
     ):
+        # A negative value is filtered out of `active` below, but `value or None` would
+        # still store it verbatim - leaving a threshold no warn count can ever match.
+        if min(mute_at, kick_at, ban_at) < 0:
+            await ctx.send(
+                embed=build_notice_embed("Warn thresholds can't be negative. Use 0 to disable a step.", success=False)
+            )
+            return
+
         active = [value for value in (mute_at, kick_at, ban_at) if value > 0]
         if active != sorted(active) or len(active) != len(set(active)):
             await ctx.send(
                 embed=build_notice_embed(
                     "Thresholds must increase in severity, with no ties: mute < kick < ban.", success=False
+                )
+            )
+            return
+
+        # Anything past Discord's timeout cap is stored happily and then fails at the
+        # moment it matters, when the automatic mute actually fires.
+        if mute_at and not 1 <= mute_minutes <= MAX_TIMEOUT_MINUTES:
+            await ctx.send(
+                embed=build_notice_embed(
+                    f"Mute duration must be between 1 and {MAX_TIMEOUT_MINUTES} minutes "
+                    "(Discord caps timeouts at 28 days).",
+                    success=False,
                 )
             )
             return

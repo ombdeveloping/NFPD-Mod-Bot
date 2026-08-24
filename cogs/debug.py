@@ -2,6 +2,7 @@ import math
 import os
 import platform
 from datetime import timedelta
+from urllib.parse import urlsplit
 
 import discord
 from discord.ext import commands
@@ -31,6 +32,25 @@ def is_bot_owner():
 
 def format_duration(seconds: float) -> str:
     return str(timedelta(seconds=int(seconds)))
+
+
+def redact_database_url(url: str) -> str:
+    """Host and database name only.
+
+    A Postgres URL embeds credentials as `scheme://user:password@host/db`, so printing
+    any fixed-length prefix of it leaks the username and the start of the password.
+    """
+    if not url:
+        return "MISSING"
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return "set (unparseable)"
+    if not parsed.hostname:
+        return "set (redacted)"
+    port = f":{parsed.port}" if parsed.port else ""
+    database = parsed.path.lstrip("/") or "unknown"
+    return f"{parsed.scheme}://***@{parsed.hostname}{port}/{database}"
 
 
 class Debug(commands.Cog):
@@ -154,7 +174,7 @@ class Debug(commands.Cog):
                 f"BOT_TOKEN: {'set' if config.BOT_TOKEN else 'MISSING'} (redacted)\n"
                 f"COMMAND_PREFIX: `{config.COMMAND_PREFIX}`\n"
                 f"BRAND_NAME: `{config.BRAND_NAME}`\n"
-                f"DATABASE_URL: `{config.DATABASE_URL[:30]}...` (PostgreSQL)"
+                f"DATABASE_URL: `{redact_database_url(config.DATABASE_URL)}`"
             ),
             inline=False,
         )

@@ -23,6 +23,7 @@ from modlog import post_to_server_log_channel
 
 logger = logging.getLogger("modbot.alt_detector")
 
+MAX_SCORE   = 100
 HIGH_RISK   = 60
 MEDIUM_RISK = 30
 
@@ -77,7 +78,10 @@ def _score_member(
             score += 5
             reasons.append(f"Invited by relatively new account ({inviter_age}d old: {inviter})")
 
-    return score, reasons
+    # The factors add up past 100 when several land at once (a day-old account with a
+    # default avatar, a digit-run name and a new inviter scores 120), which the report
+    # then renders as "120 / 100".
+    return min(score, MAX_SCORE), reasons
 
 
 def _risk_label(score: int) -> tuple[str, int]:
@@ -104,7 +108,7 @@ def _build_embed(
     embed.set_author(name=str(member), icon_url=member.display_avatar.url)
     embed.set_thumbnail(url=member.display_avatar.url)
     embed.add_field(name="User", value=f"{member.mention}\n`{member.id}`", inline=True)
-    embed.add_field(name="Risk score", value=f"**{score}** / 100", inline=True)
+    embed.add_field(name="Risk score", value=f"**{score}** / {MAX_SCORE}", inline=True)
     embed.add_field(
         name="Account age",
         value=f"{discord.utils.format_dt(member.created_at, 'R')}\n({_age_days(member.created_at)}d old)",
