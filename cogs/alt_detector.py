@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from datetime import datetime, timezone
 
 import discord
@@ -26,6 +27,10 @@ logger = logging.getLogger("modbot.alt_detector")
 MAX_SCORE   = 100
 HIGH_RISK   = 60
 MEDIUM_RISK = 30
+
+# Minimum gap between full invite re-caches of one guild, so repeated gateway
+# reconnects don't turn into repeated invite fetches for every guild.
+CACHE_REFRESH_SECONDS = 300.0
 
 COLOR_HIGH   = 0xD93A3A
 COLOR_MEDIUM = 0xF5A524
@@ -133,11 +138,25 @@ class AltDetector(commands.Cog):
         self.bot = bot
         # {guild_id: {invite_code: (uses, inviter_id)}}
         self._cache: dict[int, dict[str, tuple[int, int | None]]] = {}
+        # {guild_id: monotonic timestamp of last full invite refresh}
+        self._cached_at: dict[int, float] = {}
 
-    async def _cache_guild(self, guild: discord.Guild) -> None:
-        """Snapshot the current invite use counts for a guild."""
+    async def _cache_guild(self, guild: discord.Guild, *, force: bool = False) -> None:
+        """Snapshot the current invite use counts for a guild.
+
+        Throttled because on_ready fires on every gateway reconnect, and a brief
+        network blip would otherwise trigger one invite fetch per guild each time.
+        The cache still refreshes after a genuine outage, just not on every resume.
+        """
         if guild.me is None:
             return
+
+        now = time.monotonic()
+        last = self._cached_at.get(guild.id)
+        if not force and last is not None and now - last < CACHE_REFRESH_SECONDS:
+            return
+        self._cached_at[guild.id] = now
+
         if not guild.me.guild_permissions.manage_guild:
             logger.warning(
                 "Alt detector cannot cache invites for %s (%s) - missing Manage Guild permission",
@@ -210,7 +229,7 @@ class AltDetector(commands.Cog):
 
     @commands.Cog.listener()
     async def on_guild_join(self, guild: discord.Guild) -> None:
-        await self._cache_guild(guild)
+        await self._cache_guild(guild, force=True)
 
     @commands.Cog.listener()
     async def on_invite_create(self, invite: discord.Invite) -> None:

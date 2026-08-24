@@ -8,6 +8,19 @@ class BlockedUser(commands.CheckFailure):
     """Raised when someone on BLOCKED_USER_IDS tries to run any command."""
 
 
+def is_bot_owner():
+    """Command check restricting a command to OWNER_IDS.
+
+    Defined here rather than in each cog so the owner-only surface is enforced by
+    one predicate and cannot drift between cogs.
+    """
+
+    async def predicate(ctx: commands.Context) -> bool:
+        return ctx.author.id in OWNER_IDS
+
+    return commands.check(predicate)
+
+
 def is_blocked(user_id: int) -> bool:
     """Users on the deny list cannot use the bot at all."""
     return user_id in BLOCKED_USER_IDS

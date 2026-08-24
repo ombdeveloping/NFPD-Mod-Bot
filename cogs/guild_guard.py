@@ -113,6 +113,9 @@ class GuildGuard(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        # Unapproved guilds already reported. on_ready fires on every gateway
+        # reconnect, and without this each one repeats the same warnings.
+        self._reported: set[int] = set()
 
     def is_approved(self, guild: discord.Guild) -> bool:
         return not APPROVED_GUILD_IDS or guild.id in APPROVED_GUILD_IDS
@@ -139,8 +142,11 @@ class GuildGuard(commands.Cog):
     async def on_ready(self):
         for guild in self.bot.guilds:
             if self.is_approved(guild):
+                self._reported.discard(guild.id)
                 continue
-            logger.warning("In unapproved server: %s (%s), owner %s", guild.name, guild.id, guild.owner_id)
+            if guild.id not in self._reported:
+                self._reported.add(guild.id)
+                logger.warning("In unapproved server: %s (%s), owner %s", guild.name, guild.id, guild.owner_id)
             if LEAVE_UNAPPROVED_GUILDS:
                 await self._leave(guild)
 

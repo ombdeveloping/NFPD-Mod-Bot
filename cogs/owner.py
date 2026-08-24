@@ -1,17 +1,11 @@
 import discord
 from discord.ext import commands
 
-from config import APPROVED_GUILD_IDS, OWNER_IDS
+from config import APPROVED_GUILD_IDS
 from embeds import NEUTRAL_COLOR, base_embed, build_notice_embed, clamp
+from guards import is_bot_owner
 
 GUILDS_PER_EMBED = 10
-
-
-def is_bot_owner():
-    async def predicate(ctx: commands.Context) -> bool:
-        return ctx.author.id in OWNER_IDS
-
-    return commands.check(predicate)
 
 
 async def resolve_invite(guild: discord.Guild) -> str | None:
