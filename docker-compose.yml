@@ -26,10 +26,6 @@ services:
     networks:
       - nodey-monitoring
 
-    # Backstop for signal forwarding and zombie reaping. The image already uses
-    # tini as its entrypoint; this makes the behaviour explicit.
-    init: true
-
     # Must exceed DB_CLOSE_TIMEOUT plus the Discord close timeout so the shutdown
     # path finishes before Docker escalates to SIGKILL.
     stop_grace_period: 30s
