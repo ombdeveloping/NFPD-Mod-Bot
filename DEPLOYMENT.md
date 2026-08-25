@@ -92,8 +92,8 @@ Expected healthy startup log:
 
 ```
 Starting NFPD moderation bot (version=1.0.0 commit=abc1234)
-Database ready at postgresql://***@nfpd-postgres:5432/nfpd (pool 1-10, 1 attempt(s), 0.1s)
 Health server listening on 0.0.0.0:8080
+Database ready at postgresql://***@nfpd-postgres:5432/nfpd (pool 1-10, 1 attempt(s), 0.1s)
 Loaded 13/13 extensions
 Synced 37 slash command(s)
 Connected as NFPD Moderation (…) across N guild(s)
@@ -109,6 +109,26 @@ Connected as NFPD Moderation (…) across N guild(s)
 Docker's `HEALTHCHECK` uses `/ready`, so a container with a failing database shows
 as `unhealthy` in `docker ps` without being restarted — restarting would not fix a
 dependency outage, and the bot reconnects on its own.
+
+## Global action exemptions
+
+`GLOBAL_ACTION_EXEMPT_GUILD_IDS` accepts a comma-separated list of Discord guild
+(server) IDs. Exempt guilds are **skipped** by every global moderation command:
+`globalban`, `globalunban`, `globalkick`, `globalmute`, `globalunmute`.
+
+Use this for an **Appeals server**: a globally banned user must still be able to
+remain in or join the Appeals server so they can appeal their punishment.
+
+- Normal per-guild moderation commands (`/kick`, `/ban`, `/mute`, etc.) still work
+  inside exempt guilds — the exemption applies only to the global/cross-server
+  propagation.
+- Because exempt guilds never receive a global action, reversing that global action
+  (e.g. `globalunban`) does not touch them either, so any unrelated local moderation
+  state in the exempt guild is preserved.
+- An empty value (or omitting the variable) means no guilds are exempt, preserving
+  the existing behaviour.
+- Multiple guild IDs are separated by commas: `GLOBAL_ACTION_EXEMPT_GUILD_IDS=123,456`.
+- Invalid IDs produce a configuration error at startup.
 
 ## Operational behaviour
 

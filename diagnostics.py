@@ -93,4 +93,11 @@ def validate_config() -> list[str]:
     if not config.GLOBAL_ACTION_ROLE_IDS and not config.OWNER_IDS:
         warnings.append("No global-moderator role or owner is configured - global commands are unreachable.")
 
+    non_approved_exempt = config.GLOBAL_ACTION_EXEMPT_GUILD_IDS - config.APPROVED_GUILD_IDS
+    if config.APPROVED_GUILD_IDS and non_approved_exempt:
+        warnings.append(
+            f"{len(non_approved_exempt)} guild(s) in GLOBAL_ACTION_EXEMPT_GUILD_IDS are not in "
+            "APPROVED_GUILD_IDS - they would never receive global actions anyway."
+        )
+
     return warnings

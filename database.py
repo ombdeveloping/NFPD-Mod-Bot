@@ -212,8 +212,9 @@ async def connect_database() -> None:
                 )
                 raise
 
-            # Jitter stops the bot and any sibling service from retrying in lockstep.
-            wait = min(delay, config.DB_CONNECT_BACKOFF_MAX) * (1 + random.random() * 0.1)
+            # Jitter (±25%) stops the bot and any sibling service from retrying in lockstep.
+            base = min(delay, config.DB_CONNECT_BACKOFF_MAX)
+            wait = base * (0.75 + random.random() * 0.5)
             logger.warning(
                 "Database not reachable at %s (attempt %d, retrying in %.1fs): %s",
                 config.redacted_database_url(), attempt, wait, error,
@@ -292,7 +293,7 @@ def _record_success() -> None:
 
 def _record_failure(error: BaseException) -> None:
     global _last_failure
-    _last_failure = f"{type(error).__name__}: {error}"
+    _last_failure = type(error).__name__
 
 
 def pool_stats() -> dict:
@@ -318,10 +319,16 @@ async def _run(operation, *, idempotent: bool):
     """Acquire a connection and run `operation`, retrying transient failures.
 
     `idempotent` says whether re-running the statement is safe. A connection that
-    drops mid-query gives no way to know whether the server applied it, so
-    non-idempotent writes (an INSERT that allocates a case number, a DELETE ...
-    RETURNING that consumes saved state) are only retried when the failure happened
-    while acquiring the connection - that is, before any statement could have run.
+    drops mid-query is ambiguous: PostgreSQL may or may not have committed the
+    statement before the client lost contact. Non-idempotent writes (an INSERT that
+    allocates a case number, a DELETE ... RETURNING that consumes saved state) are
+    therefore only retried when the failure happened while acquiring the connection —
+    that is, before any statement could have run. If the failure is ambiguous (after
+    acquire, during execution), the operation is NOT retried and DatabaseUnavailable
+    is raised so the caller can surface a safe error to the user.
+
+    Callers that are naturally safe to repeat — UPSERTs, DELETEs by primary key,
+    idempotent SELECTs — should pass idempotent=True so they benefit from retry.
     """
     attempt = 0
     while True:
@@ -445,6 +452,7 @@ async def delete_case(guild_id: int, case_id: int) -> bool:
     changed = await _execute(
         "DELETE FROM cases WHERE guild_id = $1 AND id = $2",
         guild_id, case_id,
+        idempotent=True,
     )
     return changed > 0
 
@@ -599,6 +607,7 @@ async def remove_lockdown_role(guild_id: int, role_id: int) -> bool:
     changed = await _execute(
         "DELETE FROM lockdown_roles WHERE guild_id = $1 AND role_id = $2",
         guild_id, role_id,
+        idempotent=True,
     )
     return changed > 0
 
@@ -672,7 +681,11 @@ async def pop_channel_lock(guild_id: int, channel_id: int) -> dict[int, str] | N
 # --- Health checks -----------------------------------------------------------
 
 async def check_connection() -> tuple[bool, str]:
-    """Round-trip a trivial query. Returns (ok, latency or error text)."""
+    """Round-trip a trivial query. Returns (ok, latency or error text).
+
+    Error text is the exception class name only — the full message may contain
+    connection details that should not reach an HTTP endpoint or a Discord embed.
+    """
     if not is_connected():
         return False, _last_failure or "pool is not open"
     try:
@@ -681,7 +694,7 @@ async def check_connection() -> tuple[bool, str]:
         elapsed_ms = (_time.perf_counter() - started) * 1000
         return True, f"{elapsed_ms:.1f}ms"
     except Exception as error:
-        return False, str(error)
+        return False, f"{type(error).__name__}: query failed"
 
 
 async def get_total_case_count() -> int:

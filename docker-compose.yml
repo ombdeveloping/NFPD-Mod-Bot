@@ -42,10 +42,11 @@ services:
         max-file: "5"
 
     # Modest ceilings so a runaway bot cannot starve the rest of the host.
+    # Override in .env with DOCKER_MEMORY_LIMIT (e.g. 256M, 1G).
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: ${DOCKER_MEMORY_LIMIT:-512M}
 
     security_opt:
       - no-new-privileges:true

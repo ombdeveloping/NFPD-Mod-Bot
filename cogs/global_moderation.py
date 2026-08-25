@@ -5,7 +5,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from config import APPROVED_GUILD_IDS, GLOBAL_ACTION_ROLE_IDS, OWNER_IDS
+from config import APPROVED_GUILD_IDS, GLOBAL_ACTION_EXEMPT_GUILD_IDS, GLOBAL_ACTION_ROLE_IDS, OWNER_IDS
 from embeds import audit_reason, build_ban_dm_embed, build_dm_notice_embed, build_notice_embed, build_summary_embed
 from guards import is_protected
 from modlog import record_case, try_dm
@@ -40,10 +40,20 @@ def is_global_moderator():
 
 
 def target_guilds(bot: commands.Bot) -> list[discord.Guild]:
-    """Servers a global action is allowed to touch. Falls back to every server if no allowlist is set."""
-    if not APPROVED_GUILD_IDS:
-        return list(bot.guilds)
-    return [guild for guild in bot.guilds if guild.id in APPROVED_GUILD_IDS]
+    """Servers a global action is allowed to touch.
+
+    Falls back to every server if no allowlist is set. Guilds in
+    GLOBAL_ACTION_EXEMPT_GUILD_IDS are always excluded — they receive no global
+    actions so that (for example) a globally banned user can still access the
+    Appeals server.
+    """
+    if APPROVED_GUILD_IDS:
+        guilds = [g for g in bot.guilds if g.id in APPROVED_GUILD_IDS]
+    else:
+        guilds = list(bot.guilds)
+    if GLOBAL_ACTION_EXEMPT_GUILD_IDS:
+        guilds = [g for g in guilds if g.id not in GLOBAL_ACTION_EXEMPT_GUILD_IDS]
+    return guilds
 
 
 async def notify_user(user: discord.User, action_type: str, reason: str) -> None:

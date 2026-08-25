@@ -119,6 +119,12 @@ APPROVED_GUILD_IDS = _parse_id_list("APPROVED_GUILD_IDS")
 # When true, the bot immediately leaves any server not in APPROVED_GUILD_IDS.
 LEAVE_UNAPPROVED_GUILDS = _parse_bool("LEAVE_UNAPPROVED_GUILDS")
 
+# Guilds that are exempt from GLOBAL moderation actions (globalban, globalunban,
+# globalkick, globalmute, globalunmute). Intended for an Appeals server: a globally
+# banned user must still be able to remain in or join it. Normal per-guild moderation
+# commands still work inside exempt guilds.
+GLOBAL_ACTION_EXEMPT_GUILD_IDS = _parse_id_list("GLOBAL_ACTION_EXEMPT_GUILD_IDS")
+
 # Users who can never be the TARGET of a moderation action. Owners are always protected
 # on top of this list, so a compromised moderator account can't remove them.
 PROTECTED_USER_IDS = _parse_id_list("PROTECTED_USER_IDS")

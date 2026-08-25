@@ -3,8 +3,9 @@
 Startup order is deliberate:
 
     1. configure logging, so every later failure is reported the same way
-    2. wait for Postgres (retrying, not crashing) - commands are useless without it
-    3. start the health server, so probes get answers while Discord is connecting
+    2. start the health server, so /health answers probes immediately and /ready
+       reports 503 while dependencies come up
+    3. wait for Postgres (retrying, not crashing) - commands are useless without it
     4. connect to Discord
 
 Shutdown is driven by SIGTERM, which is what `docker stop` sends. Python's default
@@ -241,20 +242,23 @@ async def run() -> int:
         config.APP_VERSION, config.GIT_COMMIT,
     )
 
-    # Wait for Postgres before touching Discord: connecting first would expose
-    # commands that cannot record anything.
-    try:
-        await database.connect_database()
-    except Exception:
-        logger.critical("Database unavailable - cannot start", exc_info=True)
-        return 1
-
     bot = ModBot()
     register_handlers(bot)
     exit_code = 0
 
     try:
+        # Start the health server first so /health (liveness) answers probes while
+        # the bot waits for Postgres. /ready correctly returns 503 until both the
+        # database and Discord are up.
         await bot.health.start()
+
+        # Wait for Postgres before touching Discord: connecting first would expose
+        # commands that cannot record anything.
+        try:
+            await database.connect_database()
+        except Exception:
+            logger.critical("Database unavailable - cannot start", exc_info=True)
+            return 1
 
         client = asyncio.create_task(bot.start(BOT_TOKEN), name="discord-client")
         signalled = asyncio.create_task(shutdown.wait(), name="shutdown-signal")
